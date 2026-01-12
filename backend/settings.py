@@ -45,6 +45,7 @@ INSTALLED_APPS = [
 
 
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -55,6 +56,9 @@ MIDDLEWARE = [
 ]
 
 ROOT_URLCONF = 'backend.urls'
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:5173", # Your Vite React Frontend
+]
 
 TEMPLATES = [
     {
@@ -128,3 +132,16 @@ AUTH_USER_MODEL = 'authentication.User'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# Django REST Framework + Simple JWT configuration
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': (
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+    ),
+}
+
+# Use custom authentication backend to allow login by email, reg_no or faculty_id
+AUTHENTICATION_BACKENDS = [
+    'authentication.backends.EmailOrIDBackend',
+    'django.contrib.auth.backends.ModelBackend',
+]
