@@ -65,7 +65,6 @@ function Header() {
 function HeroSection() {
   const [noticeImages] = useState<any[]>([]);
   const [loading] = useState(false);
-  const [isLargeScreen, setIsLargeScreen] = useState(false);
 
   // TODO: Fetch notices from Django backend API
   // Example: useEffect(() => {
@@ -74,17 +73,6 @@ function HeroSection() {
   //     .then(data => setNoticeImages(data))
   // }, [])
 
-  useEffect(() => {
-    const mq = window.matchMedia("(min-width: 1024px)");
-    const onChange = (e: MediaQueryListEvent | MediaQueryList) => setIsLargeScreen((e as any).matches);
-    setIsLargeScreen(mq.matches);
-    if (mq.addEventListener) mq.addEventListener("change", onChange as any);
-    else mq.addListener(onChange as any);
-    return () => {
-      if (mq.removeEventListener) mq.removeEventListener("change", onChange as any);
-      else mq.removeListener(onChange as any);
-    };
-  }, []);
 
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPaused] = useState(false);

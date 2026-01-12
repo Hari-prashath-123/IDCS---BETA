@@ -2,6 +2,7 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Other styles below */
 /* Custom cursor for the entire site - applied to ALL elements */
 * {
   cursor: url('/cursor_blue.ico'), auto !important;

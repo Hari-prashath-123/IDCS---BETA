@@ -19,18 +19,22 @@ export default function Login() {
     setLoading(true);
 
     try {
-      const userProfile = await login(identifier, password);
+      const decoded = await login(identifier, password);
 
-      // Redirect PE HOD/AHOD to PE unique dashboard, others to normal dashboard
-      if (
-        userProfile &&
-        (userProfile.role === 'hod' || userProfile.role === 'ahod') &&
-        (String(userProfile.department || '').toLowerCase().includes('physical') || 
-         String(userProfile.department || '').toLowerCase() === 'pe')
-      ) {
-        navigate("/pe-dashboard", { replace: true });
+      // If login returned decoded token, route based on claims
+      if (decoded) {
+        if (decoded.is_superuser) {
+          navigate('/admin/dashboard', { replace: true })
+        } else if (decoded.is_student) {
+          navigate('/student/dashboard', { replace: true })
+        } else if (decoded.is_faculty || decoded.is_staff) {
+          navigate('/staff/dashboard', { replace: true })
+        } else {
+          navigate('/', { replace: true })
+        }
       } else {
-        navigate("/dashboard", { replace: true });
+        // fallback when no decoded info available
+        navigate('/', { replace: true })
       }
     } catch (err) {
       const msg =
