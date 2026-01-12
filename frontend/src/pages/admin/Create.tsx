@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import DashboardLayout from '../../components/DashboardLayout';
 // Supabase removed — use Django backend via `api` instead
 import { useAuth } from '../../context/AuthContext';
-import api, { uploadStudentExcel } from '../../services/api.js';
+import api, { uploadStudentExcel, uploadStaffExcel } from '../../services/api.js';
 
 interface ProfileRow {
   id: string;
@@ -57,6 +57,8 @@ export default function Create() {
 
   // form state
   const [newDeptName, setNewDeptName] = useState('');
+  const [parentDept, setParentDept] = useState('');
+  const [deptType, setDeptType] = useState<'ACADEMIC' | 'NON_ACADEMIC'>('ACADEMIC');
   const [hodId, setHodId] = useState<string>('');
   const [ahodId, setAhodId] = useState<string>('');
   const [submitting, setSubmitting] = useState(false);
@@ -90,11 +92,13 @@ export default function Create() {
   const [staffImportDept, setStaffImportDept] = useState('');
   const [staffImportLog, setStaffImportLog] = useState<string[]>([]);
   const [importingStaff, setImportingStaff] = useState(false);
+  const [staffImportAck, setStaffImportAck] = useState<string | null>(null);
 
   // student import state (Excel)
   const [studentImportFile, setStudentImportFile] = useState<File | null>(null);
   const [studentImportLog, setStudentImportLog] = useState<string[]>([]);
   const [importingStudents, setImportingStudents] = useState(false);
+  const [studentImportAck, setStudentImportAck] = useState<string | null>(null);
 
   // create Student state
   const [newStudentName, setNewStudentName] = useState('');
@@ -384,6 +388,165 @@ export default function Create() {
     }
   };
 
+  const handleUploadStaff = async () => {
+    console.debug('handleUploadStaff invoked')
+    if (!staffImportFile) {
+      console.debug('No staffImportFile selected')
+      return setError('Please select an Excel file to import for staff')
+    }
+    setImportingStaff(true)
+    setStaffImportLog([])
+    setError(null)
+    try {
+      const formData = new FormData()
+      formData.append('file', staffImportFile as File)
+      console.debug('About to call uploadStaffExcel', { name: (staffImportFile as File).name, size: (staffImportFile as File).size })
+      const res = await uploadStaffExcel(formData)
+      console.debug('uploadStaffExcel resolved', res)
+      const created = res.created ?? res.created_count ?? 0
+      const updated = res.updated ?? 0
+      const errors = res.errors ?? res.error ?? null
+      const log: string[] = []
+      if (created) log.push(`Created: ${created}`)
+      if (updated) log.push(`Updated: ${updated}`)
+      if (errors) {
+        if (Array.isArray(errors)) setStaffImportLog(errors as string[])
+        else setStaffImportLog([String(errors)])
+      } else if (!log.length) {
+        log.push(res.message || 'Staff import completed')
+        setStaffImportLog(log)
+      } else {
+        setStaffImportLog(log)
+      }
+
+      // set acknowledgement message
+      try {
+        const ackMsg = errors ? 'Staff import completed with errors' : `Staff import completed — Created: ${created}, Updated: ${updated}`;
+        setStaffImportAck(ackMsg);
+        setTimeout(() => setStaffImportAck(null), 8000);
+      } catch (e) {
+        // ignore
+      }
+
+      // refresh staff list if endpoint available
+      try {
+        const sResp = await api.get('/staff/')
+        // ignore returned data for now; UI will pick up on next refresh
+        console.debug('Refreshed staff list', sResp.status)
+      } catch (e) {
+        console.debug('Failed to refresh staff list after import', e)
+      }
+    } catch (err: any) {
+      console.error('Error importing staff:', err)
+      if (err && err.response && err.response.data) {
+        console.debug('Server error response data:', err.response.data)
+        setStaffImportLog([JSON.stringify(err.response.data)])
+      } else {
+        setError((err && err.message) || String(err))
+      }
+    } finally {
+      console.debug('handleUploadStaff finished; clearing importing state')
+      setImportingStaff(false)
+    }
+  }
+
+  const downloadCSV = (filename: string, headers: string[], sample?: string[]) => {
+    const rows = [headers]
+    if (sample) rows.push(sample)
+    const csv = rows.map(r => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n')
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  }
+
+  const downloadStudentTemplateXlsx = async () => {
+    try {
+      const mod: any = await import('xlsx')
+      const XLSX = (mod && (mod.default || mod))
+      const headers = ['name','email','department','DOB','reg_no','roll_no','year','section','password']
+      // fetch departments list
+      const dres = await api.get('/departments/')
+      const dlist = dres.data || []
+      const items = Array.isArray(dlist) ? dlist : (dlist && dlist.results && Array.isArray(dlist.results) ? dlist.results : Object.values(dlist || {}))
+      const deptNames = (items || []).map((d: any) => d && d.name).filter(Boolean)
+
+      const wb = XLSX.utils.book_new()
+      const wsData = [headers, ['John Doe','john.doe@example.com', deptNames[0] || '', '2002-05-12','REG2026001','101','1','A','']]
+      const ws = XLSX.utils.aoa_to_sheet(wsData)
+
+      // add hidden sheet with departments
+      const dws = XLSX.utils.aoa_to_sheet(deptNames.map((n: string) => [n]))
+      XLSX.utils.book_append_sheet(wb, ws, 'Template')
+      XLSX.utils.book_append_sheet(wb, dws, 'departments')
+
+      // create named range 'DeptList' for departments and add validation to column C
+      const lastRow = 1000
+      const deptRef = `departments!$A$1:$A$${deptNames.length || 1}`
+      wb.Workbook = wb.Workbook || {}
+      wb.Workbook.Names = wb.Workbook.Names || []
+      wb.Workbook.Names.push({ Name: 'DeptList', Ref: deptRef })
+      // @ts-ignore - set data validation using explicit range (no leading '=')
+      ws['!dataValidation'] = ws['!dataValidation'] || []
+      ws['!dataValidation'].push({ sqref: `C2:C${lastRow}`, type: 'list', allowBlank: true, formulas: [deptRef] })
+
+      XLSX.writeFile(wb, 'students_template.xlsx')
+    } catch (e) {
+      console.error('Failed to generate XLSX student template', e)
+      // fallback to CSV
+      const headers = ['name','email','department','DOB','reg_no','roll_no','year','section','password']
+      const sample = ['John Doe','john.doe@example.com','AI&DS','2002-05-12','REG2026001','101','1','A','']
+      downloadCSV('students_template.csv', headers, sample)
+    }
+  }
+
+  const downloadStaffTemplateXlsx = async () => {
+    try {
+      const mod: any = await import('xlsx')
+      const XLSX = (mod && (mod.default || mod))
+      const headers = ['faculty_id','name','dept','role','designation','qualification','date_of_joining','email']
+      const dres = await api.get('/departments/')
+      const dlist = dres.data || []
+      const items = Array.isArray(dlist) ? dlist : (dlist && dlist.results && Array.isArray(dlist.results) ? dlist.results : Object.values(dlist || {}))
+      const deptNames = (items || []).map((d: any) => d && d.name).filter(Boolean)
+
+      const wb = XLSX.utils.book_new()
+      const wsData = [headers, ['STF1001','Avudaiappan T', deptNames[0] || 'AI&DS','lecturer','Assistant Professor','B.E., M.E., Ph.D.','2017-09-01','avudaiappant.ai@krct.ac.in']]
+      const ws = XLSX.utils.aoa_to_sheet(wsData)
+      const dws = XLSX.utils.aoa_to_sheet(deptNames.map((n: string) => [n]))
+      XLSX.utils.book_append_sheet(wb, ws, 'Template')
+      XLSX.utils.book_append_sheet(wb, dws, 'departments')
+      const lastRow = 1000
+      const deptRef = `departments!$A$1:$A$${deptNames.length || 1}`
+      wb.Workbook = wb.Workbook || {}
+      wb.Workbook.Names = wb.Workbook.Names || []
+      wb.Workbook.Names.push({ Name: 'DeptList', Ref: deptRef })
+      // @ts-ignore
+      ws['!dataValidation'] = ws['!dataValidation'] || []
+      ws['!dataValidation'].push({ sqref: `C2:C${lastRow}`, type: 'list', allowBlank: true, formulas: [deptRef] })
+      XLSX.writeFile(wb, 'staff_template.xlsx')
+    } catch (e) {
+      console.error('Failed to generate XLSX staff template', e)
+      const headers = ['faculty_id','name','dept','role','designation','qualification','date_of_joining','email']
+      const sample = ['STF1001','Avudaiappan T','AI&DS','lecturer','Assistant Professor','B.E., M.E., Ph.D.','2017-09-01','avudaiappant.ai@krct.ac.in']
+      downloadCSV('staff_template.csv', headers, sample)
+    }
+  }
+
+  // Backwards-compatible wrappers used by the UI buttons
+  const downloadStudentTemplate = () => {
+    downloadStudentTemplateXlsx()
+  }
+
+  const downloadStaffTemplate = () => {
+    downloadStaffTemplateXlsx()
+  }
+
   const handleUploadStudents = async () => {
     console.debug('handleUploadStudents invoked')
     if (!studentImportFile) {
@@ -414,6 +577,15 @@ export default function Create() {
         setStudentImportLog(log);
       } else {
         setStudentImportLog(log);
+      }
+
+      // set acknowledgement message
+      try {
+        const ackMsg = errors ? 'Import completed with errors' : `Import completed — Created: ${created}, Updated: ${updated}`;
+        setStudentImportAck(ackMsg);
+        setTimeout(() => setStudentImportAck(null), 8000);
+      } catch (e) {
+        // ignore
       }
 
       // refresh students list
@@ -502,6 +674,48 @@ export default function Create() {
     }
   };
 
+  const handleCreateDepartment = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!newDeptName.trim()) return setError('Please enter department name');
+    setSubmitting(true);
+    setError(null);
+    try {
+      const payload: any = { name: newDeptName.trim() };
+      // attach parent by id when possible
+      if (parentDept) {
+        const pid = deptNameToId[parentDept];
+        payload.parent = pid ? pid : parentDept;
+      }
+      if (deptType) payload.type = deptType;
+
+      const resp = await api.post('/departments/', payload);
+      if (resp.status === 201 || resp.status === 200) {
+        // refresh departments list
+        try {
+          const dResp = await api.get('/departments/');
+          const full = dResp.data || [];
+          const items = Array.isArray(full) ? full : (full.results && Array.isArray(full.results) ? full.results : Object.values(full || {}));
+          const names = (items || []).map((d: any) => d && d.name).filter(Boolean);
+          const map: Record<string, number> = {};
+          (items || []).forEach((d: any) => { if (d && d.name) map[d.name] = d.id });
+          setDepartments(names as string[]);
+          setDeptNameToId(map);
+        } catch (e) {
+          // ignore refresh errors
+        }
+        setNewDeptName('');
+        setParentDept('');
+        setDeptType('ACADEMIC');
+        alert('Department created');
+      }
+    } catch (err: any) {
+      console.error('Error creating department:', err);
+      setError((err && err.message) || String(err));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   // Staff CSV import button was previously simplified to use API; keep that behavior
 
   const sidebarItems = [
@@ -526,13 +740,17 @@ export default function Create() {
           <p className="text-sm text-slate-600 mb-3">Upload an Excel file with columns: name, email, department, DOB, reg_no, roll_no, year, section, password</p>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
             <div>
-              <input type="file" accept=".xlsx,.xls" onChange={(e) => setStudentImportFile(e.target.files ? e.target.files[0] : null)} />
+                <input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => setStudentImportFile(e.target.files ? e.target.files[0] : null)} />
             </div>
-            <div>
-              <button onClick={handleUploadStudents} disabled={importingStudents} className="py-2 px-4 bg-indigo-600 text-white rounded hover:bg-indigo-700">
-                {importingStudents ? 'Importing...' : 'Upload Students'}
-              </button>
-            </div>
+              <div className="flex items-center space-x-2">
+                <button onClick={handleUploadStudents} disabled={importingStudents} className="py-2 px-4 bg-indigo-600 text-white rounded hover:bg-indigo-700">
+                  {importingStudents ? 'Importing...' : 'Upload Students'}
+                </button>
+                <button type="button" onClick={() => downloadStudentTemplate()} className="py-2 px-3 bg-slate-100 border rounded hover:bg-slate-200 text-sm">Download template</button>
+              </div>
+              {studentImportAck && (
+                <div className="mt-2 text-sm text-green-700">{studentImportAck}</div>
+              )}
             <div>
               {studentImportFile && <div className="text-sm text-slate-700">Selected: {studentImportFile.name}</div>}
             </div>
@@ -542,6 +760,37 @@ export default function Create() {
               <h4 className="font-medium text-sm mb-1">Import Log</h4>
               <ul className="text-sm list-disc pl-5">
                 {studentImportLog.map((l, idx) => <li key={idx} className="text-slate-700">{l}</li>)}
+              </ul>
+            </div>
+          )}
+        </div>
+
+        {/* Bulk import staff via Excel */}
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 mb-6">
+          <h3 className="text-md font-medium mb-3">Bulk Import Staff (Excel)</h3>
+          <p className="text-sm text-slate-600 mb-3">Upload an Excel file with columns: id, name, dept, role, designation, qualification, date of joining. Leave any column empty (except faculty id) to keep it unchanged.</p>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+            <div>
+                <input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => setStaffImportFile(e.target.files ? e.target.files[0] : null)} />
+            </div>
+              <div className="flex items-center space-x-2">
+                <button onClick={handleUploadStaff} disabled={importingStaff} className="py-2 px-4 bg-green-600 text-white rounded hover:bg-green-700">
+                  {importingStaff ? 'Importing...' : 'Upload Staff'}
+                </button>
+                <button type="button" onClick={() => downloadStaffTemplate()} className="py-2 px-3 bg-slate-100 border rounded hover:bg-slate-200 text-sm">Download template</button>
+              </div>
+              {staffImportAck && (
+                <div className="mt-2 text-sm text-green-700">{staffImportAck}</div>
+              )}
+            <div>
+              {staffImportFile && <div className="text-sm text-slate-700">Selected: {staffImportFile.name}</div>}
+            </div>
+          </div>
+          {staffImportLog.length > 0 && (
+            <div className="mt-2">
+              <h4 className="font-medium text-sm mb-1">Import Log</h4>
+              <ul className="text-sm list-disc pl-5">
+                {staffImportLog.map((l, idx) => <li key={idx} className="text-slate-700">{l}</li>)}
               </ul>
             </div>
           )}
@@ -788,11 +1037,37 @@ export default function Create() {
           </form>
         </div>
 
-        {/* Create department form (omitted rest unchanged) */}
+        {/* Create department form */}
         <div className="bg-white rounded-xl shadow-lg border border-slate-200 p-6 mb-6">
           <h2 className="text-lg font-semibold mb-4">Create Department</h2>
           {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-2 rounded mb-4">{error}</div>}
-          {/* The rest of the department form is unchanged from previous implementation and omitted for brevity */}
+          <form onSubmit={handleCreateDepartment} className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label className="block text-sm text-slate-600 mb-1">Department Name *</label>
+                <input value={newDeptName} onChange={(e) => setNewDeptName(e.target.value)} placeholder="e.g., AI & DS" className="w-full px-3 py-2 border rounded" />
+              </div>
+              <div>
+                <label className="block text-sm text-slate-600 mb-1">Parent Department</label>
+                <select value={parentDept} onChange={(e) => setParentDept(e.target.value)} className="w-full px-3 py-2 border rounded">
+                  <option value="">None</option>
+                  {departments.map((d) => (<option key={d} value={d}>{d}</option>))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm text-slate-600 mb-1">Type</label>
+                <select value={deptType} onChange={(e) => setDeptType(e.target.value as any)} className="w-full px-3 py-2 border rounded">
+                  <option value="ACADEMIC">Academic</option>
+                  <option value="NON_ACADEMIC">Non-academic</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="flex items-center space-x-2">
+              <button type="submit" disabled={submitting} className="py-2 px-4 bg-emerald-600 text-white rounded hover:bg-emerald-700">{submitting ? 'Creating...' : 'Create Department'}</button>
+              <button type="button" onClick={() => { setNewDeptName(''); setParentDept(''); setDeptType('ACADEMIC'); }} className="py-2 px-4 border rounded hover:bg-slate-50">Reset</button>
+            </div>
+          </form>
         </div>
       </div>
     </DashboardLayout>
