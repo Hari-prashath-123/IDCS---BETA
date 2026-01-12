@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import DashboardLayout from '../../components/DashboardLayout';
 // Supabase removed — use Django backend via `api` instead
 import { useAuth } from '../../context/AuthContext';
-import api from '../../services/api.js';
+import api, { uploadStudentExcel } from '../../services/api.js';
 
 interface ProfileRow {
   id: string;
@@ -78,6 +78,7 @@ export default function Create() {
   // create Staff state
   const [newStaffName, setNewStaffName] = useState('');
   const [newStaffEmail, setNewStaffEmail] = useState('');
+  const [newStaffFacultyId, setNewStaffFacultyId] = useState('');
   const [newStaffDob, setNewStaffDob] = useState('');
   const [newStaffRole, setNewStaffRole] = useState<'mentor' | 'advisor' | 'lecturer'>('mentor');
   const [newStaffDepartment, setNewStaffDepartment] = useState('');
@@ -89,6 +90,11 @@ export default function Create() {
   const [staffImportDept, setStaffImportDept] = useState('');
   const [staffImportLog, setStaffImportLog] = useState<string[]>([]);
   const [importingStaff, setImportingStaff] = useState(false);
+
+  // student import state (Excel)
+  const [studentImportFile, setStudentImportFile] = useState<File | null>(null);
+  const [studentImportLog, setStudentImportLog] = useState<string[]>([]);
+  const [importingStudents, setImportingStudents] = useState(false);
 
   // create Student state
   const [newStudentName, setNewStudentName] = useState('');
@@ -241,14 +247,16 @@ export default function Create() {
     setCreatingStaff(true);
     setError(null);
     try {
-      const genStaffId = `STF${Date.now().toString().slice(-6)}`;
       const dobVal = newStaffDob || '1990-01-01';
       const defaultPassword = dobVal.replace(/-/g, '');
+
+      // Faculty ID is required
+      if (!newStaffFacultyId.trim()) return setError('Faculty ID is required');
 
       const payload: any = {
         name: newStaffName.trim(),
         email: newStaffEmail.trim(),
-        faculty_id: genStaffId,
+        faculty_id: newStaffFacultyId.trim(),
         designation: newStaffRole,
         date_of_joining: dobVal,
         password: defaultPassword,
@@ -263,13 +271,14 @@ export default function Create() {
         payload.section = newStaffSection.trim().toUpperCase();
       }
 
-      const resp = await api.post('/staff/', payload);
+      const resp = await api.post('/staff/create/', payload);
       if (resp.status === 201 || resp.status === 200) {
         alert('Staff created successfully');
         // reset form
         setNewStaffName('');
         setNewStaffEmail('');
         setNewStaffDob('');
+        setNewStaffFacultyId('');
         setNewStaffRole('mentor');
         setNewStaffDepartment('');
         setNewStaffYear(1);
@@ -375,6 +384,60 @@ export default function Create() {
     }
   };
 
+  const handleUploadStudents = async () => {
+    console.debug('handleUploadStudents invoked')
+    if (!studentImportFile) {
+      console.debug('No studentImportFile selected')
+      return setError('Please select an Excel file to import')
+    }
+    setImportingStudents(true)
+    setStudentImportLog([])
+    setError(null)
+    try {
+      const formData = new FormData()
+      formData.append('file', studentImportFile as File)
+      console.debug('About to call uploadStudentExcel', { name: (studentImportFile as File).name, size: (studentImportFile as File).size })
+      const res = await uploadStudentExcel(formData)
+      console.debug('uploadStudentExcel resolved', res)
+      // server returns created/updated/errors
+      const created = res.created ?? res.created_count ?? 0
+      const updated = res.updated ?? 0
+      const errors = res.errors ?? res.error ?? null
+      const log: string[] = []
+      if (created) log.push(`Created: ${created}`);
+      if (updated) log.push(`Updated: ${updated}`);
+      if (errors) {
+        if (Array.isArray(errors)) setStudentImportLog(errors as string[]);
+        else setStudentImportLog([String(errors)]);
+      } else if (!log.length) {
+        log.push(res.message || 'Import completed');
+        setStudentImportLog(log);
+      } else {
+        setStudentImportLog(log);
+      }
+
+      // refresh students list
+      try {
+        const sResp = await api.get('/students/');
+        const sData = sResp.data || [];
+        const studentMap: Record<string, StudentRow> = {};
+        (sData || []).forEach((s: any) => { studentMap[s.id] = s; });
+        setStudents(studentMap);
+      } catch (e) {
+        // ignore
+      }
+    } catch (err: any) {
+      console.error('Error importing students:', err);
+      if (err.response && err.response.data) {
+        setStudentImportLog([JSON.stringify(err.response.data)]);
+      } else {
+        setError(err.message || String(err));
+      }
+    } finally {
+      setImportingStudents(false);
+    }
+  };
+
   const handleCreateHod = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!newHodName.trim() || !newHodEmail.trim()) return setError('HOD name and email are required');
@@ -457,11 +520,38 @@ export default function Create() {
           <p className="text-slate-600 mt-1">List of departments and their HOD/AHOD/staff/students</p>
         </div>
 
+        {/* Bulk import students via Excel */}
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 mb-6">
+          <h3 className="text-md font-medium mb-3">Bulk Import Students (Excel)</h3>
+          <p className="text-sm text-slate-600 mb-3">Upload an Excel file with columns: name, email, department, DOB, reg_no, roll_no, year, section, password</p>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+            <div>
+              <input type="file" accept=".xlsx,.xls" onChange={(e) => setStudentImportFile(e.target.files ? e.target.files[0] : null)} />
+            </div>
+            <div>
+              <button onClick={handleUploadStudents} disabled={importingStudents} className="py-2 px-4 bg-indigo-600 text-white rounded hover:bg-indigo-700">
+                {importingStudents ? 'Importing...' : 'Upload Students'}
+              </button>
+            </div>
+            <div>
+              {studentImportFile && <div className="text-sm text-slate-700">Selected: {studentImportFile.name}</div>}
+            </div>
+          </div>
+          {studentImportLog.length > 0 && (
+            <div className="mt-2">
+              <h4 className="font-medium text-sm mb-1">Import Log</h4>
+              <ul className="text-sm list-disc pl-5">
+                {studentImportLog.map((l, idx) => <li key={idx} className="text-slate-700">{l}</li>)}
+              </ul>
+            </div>
+          )}
+        </div>
+
         {/* Create Staff */}
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 mb-6">
           <h3 className="text-md font-medium mb-3">Create Staff (Mentor/Advisor/Lecturer)</h3>
           <form onSubmit={handleCreateStaff} className="space-y-3">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div>
                 <label className="block text-sm text-slate-600 mb-1">Name *</label>
                 <input 
@@ -480,6 +570,16 @@ export default function Create() {
                   className="w-full px-3 py-2 border rounded" 
                 />
                 {newStaffErrors.email && <div className="text-red-600 text-sm mt-1">{newStaffErrors.email}</div>}
+              </div>
+              <div>
+                <label className="block text-sm text-slate-600 mb-1">Faculty ID *</label>
+                <input
+                  value={newStaffFacultyId}
+                  onChange={(e) => setNewStaffFacultyId(e.target.value)}
+                  placeholder="e.g., STF1001"
+                  className="w-full px-3 py-2 border rounded"
+                />
+                {newStaffErrors.faculty_id && <div className="text-red-600 text-sm mt-1">{newStaffErrors.faculty_id}</div>}
               </div>
             </div>
 

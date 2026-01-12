@@ -3,9 +3,9 @@ import DashboardLayout from '../../components/DashboardLayout'
 import api from '../../services/api'
 import { useAuth } from '../../context/AuthContext'
 
-export default function Students() {
+export default function Staff() {
   const { user } = useAuth()
-  const [students, setStudents] = useState<any[]>([])
+  const [staff, setStaff] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -14,12 +14,12 @@ export default function Students() {
     const load = async () => {
       try {
         setLoading(true)
-        const res = await api.get('/students/')
+        const res = await api.get('/staff/')
         if (!mounted) return
         const data = res.data || []
-        setStudents(Array.isArray(data) ? data : data.results || [])
+        setStaff(Array.isArray(data) ? data : data.results || [])
       } catch (err: any) {
-        console.error('Error fetching students:', err)
+        console.error('Error fetching staff:', err)
         setError(err.message || String(err))
       } finally {
         setLoading(false)
@@ -38,11 +38,11 @@ export default function Students() {
     <DashboardLayout sidebarItems={sidebarItems}>
       <div className="max-w-7xl mx-auto">
         <div className="mb-6">
-          <h1 className="text-xl font-bold">Manage Students</h1>
-          <p className="text-slate-600 mt-1">List of registered students</p>
+          <h1 className="text-xl font-bold">Manage Staff</h1>
+          <p className="text-slate-600 mt-1">List of registered staff</p>
         </div>
 
-        {loading && <div className="p-4 bg-white rounded">Loading students...</div>}
+        {loading && <div className="p-4 bg-white rounded">Loading staff...</div>}
         {error && <div className="p-4 bg-red-50 text-red-700 rounded">{error}</div>}
 
         {!loading && !error && (
@@ -51,21 +51,19 @@ export default function Students() {
               <thead>
                 <tr className="text-left">
                   <th className="py-2">Name</th>
-                  <th className="py-2">Reg No</th>
-                  <th className="py-2">Roll No</th>
-                  <th className="py-2">Year</th>
-                  <th className="py-2">Section</th>
+                  <th className="py-2">Faculty ID</th>
+                  <th className="py-2">Email</th>
+                  <th className="py-2">Designation</th>
                   <th className="py-2">Department</th>
                 </tr>
               </thead>
               <tbody>
-                {students.map((s: any) => (
+                {staff.map((s: any) => (
                   <tr key={s.id} className="border-t">
                     <td className="py-2">{s.name || s.user || s.email}</td>
-                    <td className="py-2">{s.reg_no}</td>
-                    <td className="py-2">{s.roll_no}</td>
-                    <td className="py-2">{s.year}</td>
-                    <td className="py-2">{s.section}</td>
+                    <td className="py-2">{s.faculty_id}</td>
+                    <td className="py-2">{s.email || s.user}</td>
+                    <td className="py-2">{s.designation}</td>
                     <td className="py-2">{typeof s.department === 'object' ? s.department?.name : s.department}</td>
                   </tr>
                 ))}

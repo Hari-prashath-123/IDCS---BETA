@@ -22,19 +22,7 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     let mounted = true
-
     async function loadCounts() {
-      try {
-        // try consolidated stats endpoint first (not present) - skip
-        // const res = await api.get('/stats/')
-        if (!mounted) return
-        setStudentCount(res.data.students ?? null)
-        setStaffCount(res.data.staff ?? null)
-        return
-      } catch (e) {
-        // fallback to individual endpoints
-      }
-
       try {
         const [sRes, fRes] = await Promise.all([
           api.get('/students/'),
