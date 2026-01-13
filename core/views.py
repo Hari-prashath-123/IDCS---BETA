@@ -103,14 +103,14 @@ class StaffCreateView(generics.CreateAPIView):
 class CourseAllocationViewSet(viewsets.ModelViewSet):
     """Manage CourseAllocation objects.
 
-    - Custom action `get_active_courses` returns courses for given department_id, batch_year, semester.
+    - Custom action `active_courses` returns courses for given department_id, batch_year, semester.
     - create/update override allow bulk assigning courses to allocation.
     """
     queryset = CourseAllocation.objects.all().select_related('department')
     serializer_class = CourseAllocationSerializer
 
-    @action(detail=False, methods=['get'], url_path='get_active_courses')
-    def get_active_courses(self, request):
+    @action(detail=False, methods=['get'], url_path='active-courses')
+    def active_courses(self, request):
         dept = request.query_params.get('department_id') or request.query_params.get('department')
         batch = request.query_params.get('batch_year') or request.query_params.get('batch')
         semester = request.query_params.get('semester')

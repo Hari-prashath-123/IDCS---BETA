@@ -582,6 +582,11 @@ export default function DashboardLayout({
                     icon: <BookOpen className="h-5 w-5" />,
                   },
                   {
+                    label: "Manage Semester",
+                    path: "/hod/manage-semester-courses",
+                    icon: <BookOpen className="h-5 w-5" />,
+                  },
+                  {
                     label: "Staff Leave",
                     path: "/hod/staff-leave-approval",
                     icon: <ClipboardCheck className="h-5 w-5" />,

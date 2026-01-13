@@ -84,6 +84,13 @@ class CourseAllocationSerializer(serializers.ModelSerializer):
     class Meta:
         model = CourseAllocation
         fields = ['id', 'department', 'batch_year', 'semester', 'courses', 'created_at', 'updated_at']
+    
+    def to_representation(self, instance):
+        """Return nested course details when reading."""
+        representation = super().to_representation(instance)
+        # Include course names and details in read representation
+        representation['courses'] = CourseSerializer(instance.courses.all(), many=True).data
+        return representation
 
 
 class StudentCreateSerializer(serializers.ModelSerializer):

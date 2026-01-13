@@ -70,4 +70,42 @@ export async function uploadStaffExcel(formData) {
   return res.data
 }
 
+/**
+ * Fetch all courses for a specific department
+ * @param {number|string} deptId - Department ID
+ * @returns {Promise<Array>} Array of course objects
+ */
+export async function getDepartmentCourses(deptId) {
+  const res = await api.get(`/courses/?department=${deptId}`)
+  return res.data
+}
+
+/**
+ * Save semester allocation (create or update)
+ * @param {Object} data - { department, batch_year, semester, courses }
+ * @returns {Promise<Object>} Created/updated allocation
+ */
+export async function saveSemesterAllocation(data) {
+  const res = await api.post('/course-allocations/', data)
+  return res.data
+}
+
+/**
+ * Get active courses for a specific department, batch, and semester
+ * @param {number|string} deptId - Department ID
+ * @param {number|string} batch - Batch year
+ * @param {number|string} sem - Semester number
+ * @returns {Promise<Array>} Array of course objects
+ */
+export async function getActiveCourses(deptId, batch, sem) {
+  const res = await api.get('/course-allocations/active-courses/', {
+    params: {
+      department_id: deptId,
+      batch_year: batch,
+      semester: sem,
+    },
+  })
+  return res.data
+}
+
 export default api

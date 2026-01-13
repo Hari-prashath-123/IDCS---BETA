@@ -9,7 +9,7 @@ router.register(r'courses', CourseViewSet, basename='course')
 router.register(r'students', StudentProfileViewSet, basename='studentprofile')
 router.register(r'staff', StaffProfileViewSet, basename='staff')
 router.register(r'departments', DepartmentViewSet, basename='department')
-router.register(r'allocations', CourseAllocationViewSet, basename='courseallocation')
+router.register(r'course-allocations', CourseAllocationViewSet, basename='course-allocation')
 
 # Important: register explicit import/create endpoints BEFORE the router include
 # so that paths like /students/create/ are not swallowed by the router's detail

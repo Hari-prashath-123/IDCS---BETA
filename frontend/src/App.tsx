@@ -9,6 +9,8 @@ import Views from './pages/admin/Views'
 import TimetablePage from './pages/admin/TimetablePage'
 import HodTimetable from './pages/admin/TimetablePage'
 import HodDashboard from './pages/hod/Dashboard'
+import HodCurriculum from './pages/hod/Curriculum'
+import ManageSemesterCourses from './pages/hod/ManageSemesterCourses'
 import StaffDashboard from './pages/staff/Dashboard'
 import StudentDashboard from './pages/student/Dashboard'
 import ProtectedRoute from './components/ProtectedRoute'
@@ -25,7 +27,9 @@ function App() {
       <Route path="/admin/views" element={<ProtectedRoute allowedRoles={["superuser"]}><Views /></ProtectedRoute>} />
       <Route path="/admin/timetable" element={<ProtectedRoute allowedRoles={["superuser"]}><TimetablePage /></ProtectedRoute>} />
       <Route path="/hod/dashboard" element={<ProtectedRoute allowedRoles={["hod"]}><HodDashboard /></ProtectedRoute>} />
+      <Route path="/hod/curriculum" element={<ProtectedRoute allowedRoles={["hod"]}><HodCurriculum /></ProtectedRoute>} />
       <Route path="/hod/timetable" element={<ProtectedRoute allowedRoles={["hod"]}><HodTimetable /></ProtectedRoute>} />
+      <Route path="/hod/manage-semester-courses" element={<ProtectedRoute allowedRoles={["hod"]}><ManageSemesterCourses /></ProtectedRoute>} />
       <Route path="/staff/dashboard" element={<ProtectedRoute allowedRoles={["staff", "faculty"]}><StaffDashboard /></ProtectedRoute>} />
       <Route path="/student/dashboard" element={<ProtectedRoute allowedRoles={["student"]}><StudentDashboard /></ProtectedRoute>} />
     </Routes>
