@@ -2,7 +2,14 @@ import React from 'react'
 import DashboardLayout from '../../components/DashboardLayout'
 
 export default function Views() {
-  const sidebarItems = [];
+  const sidebarItems = [
+    { label: 'Dashboard', path: '/admin-dashboard', icon: null },
+    { label: 'Manage Students', path: '/admin/students', icon: null },
+    { label: 'Manage Staff', path: '/admin/staff', icon: null },
+    { label: 'Create', path: '/admin/create', icon: null },
+    { label: 'Add Curriculum', path: '/admin/add-curriculum', icon: null },
+    { label: 'Views', path: '/admin/views', icon: null },
+  ];
   return (
     <DashboardLayout sidebarItems={sidebarItems}>
       <div className="max-w-7xl mx-auto">

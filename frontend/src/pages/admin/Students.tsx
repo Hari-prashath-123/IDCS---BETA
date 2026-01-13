@@ -119,6 +119,7 @@ export default function Students() {
   const sidebarItems = [
     { label: 'Dashboard', path: '/admin-dashboard', icon: null },
     { label: 'Create', path: '/admin/create', icon: null },
+    { label: 'Add Curriculum', path: '/admin/add-curriculum', icon: null },
   ]
 
   return (

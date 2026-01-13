@@ -52,12 +52,49 @@ class Department(TimeStampedModel):
 
 
 class Course(TimeStampedModel):
+    # Basic Info
     name = models.CharField(max_length=255)
     code = models.CharField(max_length=50, unique=True)
-    department = models.ForeignKey(
-        Department, on_delete=models.CASCADE, related_name='courses'
+    semester = models.PositiveSmallIntegerField(help_text="Semester (1-8)")
+    admin_department_name = models.CharField(max_length=255, help_text="Manually entered department name")
+    
+    # Target Departments - which departments study this course
+    target_departments = models.ManyToManyField(
+        Department, 
+        related_name='curriculum_courses',
+        blank=True,
+        help_text="Departments that study this course"
     )
-    credits = models.PositiveSmallIntegerField()
+    
+    # Class Types (e.g., Theory, Practical)
+    class_types = models.JSONField(
+        default=list,
+        help_text="List of class types: ['Theory', 'Practical']"
+    )
+    
+    # Category (e.g., PC, ES, PE, HS, etc.)
+    category = models.CharField(
+        max_length=10,
+        help_text="Course category (e.g., PC, ES, PE, HS)"
+    )
+    
+    # Credits Structure: L-T-P-S-C
+    L = models.FloatField(default=0, help_text="Lecture credits")
+    T = models.FloatField(default=0, help_text="Tutorial credits")
+    P = models.FloatField(default=0, help_text="Practical credits")
+    S = models.FloatField(default=0, help_text="Self-study credits")
+    C = models.FloatField(default=0, help_text="Total credits")
+    # Batch year for which this course entry applies
+    batch = models.PositiveSmallIntegerField(null=True, blank=True, help_text="Academic batch year (e.g., 2023)")
+    
+    # Marks
+    internal_marks = models.IntegerField(default=0)
+    external_marks = models.IntegerField(default=0)
+    
+    @property
+    def total_marks(self):
+        """Calculate total marks as sum of internal and external marks"""
+        return self.internal_marks + self.external_marks
 
     def __str__(self):
         return f"{self.code} - {self.name}"

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import React, { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { Mail, Lock, AlertCircle, Eye, EyeOff } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
@@ -12,6 +12,24 @@ export default function Login() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [debugMsg, setDebugMsg] = useState('');
+  
+  // capture any uncaught errors and show them in the UI for debugging
+  React.useEffect(() => {
+    const handler = (event) => {
+      try {
+        const message = event && event.message ? event.message : String(event);
+        setDebugMsg(`Unhandled error: ${message}`)
+      } catch (e) {}
+    }
+    window.addEventListener('error', handler)
+    window.addEventListener('unhandledrejection', (ev) => {
+      try { setDebugMsg(`Unhandled promise rejection: ${ev.reason?.message || String(ev.reason)}`) } catch (e) {}
+    })
+    return () => {
+      window.removeEventListener('error', handler)
+    }
+  }, [])
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -19,27 +37,24 @@ export default function Login() {
     setLoading(true);
 
     try {
-      const decoded = await login(identifier, password);
-
-      // If login returned decoded token, route based on claims
-      if (decoded) {
-        if (decoded.is_superuser) {
-          navigate('/admin/dashboard', { replace: true })
-        } else if (decoded.is_student) {
-          navigate('/student/dashboard', { replace: true })
-        } else if (decoded.is_faculty || decoded.is_staff) {
-          navigate('/staff/dashboard', { replace: true })
-        } else {
-          navigate('/', { replace: true })
-        }
-      } else {
-        // fallback when no decoded info available
-        navigate('/', { replace: true })
+      // Delegate routing to AuthProvider.login which handles fetching the profile
+      setDebugMsg('Attempting login...')
+      console.debug('Login: attempting login for', identifier)
+      try {
+        await login(identifier, password);
+        setDebugMsg('Login request sent — awaiting redirect from AuthProvider')
+      } catch (e) {
+        // show immediate error
+        const msg = (e && e.message) || 'Login failed'
+        setDebugMsg(`Login error: ${msg}`)
+        throw e
       }
+      // AuthProvider will perform navigation based on profile; no further action here
     } catch (err) {
       const msg =
         (err && err.message) || "Invalid email or password. Please try again.";
       setError(msg);
+      setDebugMsg(`Login error: ${msg}`)
       console.error(err);
     } finally {
       setLoading(false);
@@ -49,6 +64,9 @@ export default function Login() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-slate-100 flex flex-col pt-16">
       <AuthHeader />
+      {debugMsg && (
+        <div className="max-w-md w-full mx-auto mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded text-sm text-yellow-800">{debugMsg}</div>
+      )}
       <div className="flex-1 flex items-center justify-center px-4 py-12 md:py-16">
         <div className="max-w-md w-full bg-white rounded-xl shadow-lg border border-slate-200 p-8">
           <form onSubmit={handleSubmit} className="space-y-6">
@@ -125,6 +143,7 @@ export default function Login() {
 
             <button
               type="submit"
+              onClick={handleSubmit}
               disabled={loading}
               className="w-full py-3 px-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:ring-4 focus:ring-blue-200 font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >

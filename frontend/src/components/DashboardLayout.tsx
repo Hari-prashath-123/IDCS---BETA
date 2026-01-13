@@ -258,7 +258,7 @@ export default function DashboardLayout({
         </div>
       )}
 
-      <div className="flex pt-16">
+      <div className="flex pt-16 w-full">
         <aside
           className={`fixed left-0 top-16 bottom-0 w-full sm:w-64 bg-white border-r border-slate-200 transform transition-transform duration-300 ease-in-out z-40 flex flex-col ${
             sidebarOpen ? "translate-x-0" : "-translate-x-full"
@@ -522,7 +522,7 @@ export default function DashboardLayout({
                 const hodMenu = [
                   {
                     label: "Dashboard",
-                    path: "/dashboard",
+                    path: "/hod/dashboard",
                     icon: <Home className="h-5 w-5" />,
                   },
                   // Department link for HODs will be conditionally inserted below if mapping exists
@@ -899,11 +899,11 @@ export default function DashboardLayout({
         </aside>
 
         <main
-          className={`flex-1 transition-all duration-300 ${
+          className={`flex-1 transition-all duration-300 min-w-0 w-full ${
             isDesktop && sidebarOpen ? "ml-64" : "ml-0"
           }`}
         >
-          <div className="p-4 sm:p-6 lg:p-8">{children}</div>
+          <div className="p-4 sm:p-6 lg:p-8 w-full">{children}</div>
         </main>
       </div>
 

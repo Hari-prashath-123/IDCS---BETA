@@ -71,11 +71,13 @@ export default function Create() {
   const [newHodEmail, setNewHodEmail] = useState('');
   const [newHodDob, setNewHodDob] = useState('');
   const [creatingHod, setCreatingHod] = useState(false);
+  const [newHodDepartment, setNewHodDepartment] = useState('');
 
   const [newAhodName, setNewAhodName] = useState('');
   const [newAhodEmail, setNewAhodEmail] = useState('');
   const [newAhodDob, setNewAhodDob] = useState('');
   const [creatingAhod, setCreatingAhod] = useState(false);
+  const [newAhodDepartment, setNewAhodDepartment] = useState('');
 
   // create Staff state
   const [newStaffName, setNewStaffName] = useState('');
@@ -89,6 +91,8 @@ export default function Create() {
   const [creatingStaff, setCreatingStaff] = useState(false);
   // staff import state
   const [staffImportFile, setStaffImportFile] = useState<File | null>(null);
+  const [staffPreviewData, setStaffPreviewData] = useState<any[] | null>(null);
+  const [staffPreviewVisible, setStaffPreviewVisible] = useState(false);
   const [staffImportDept, setStaffImportDept] = useState('');
   const [staffImportLog, setStaffImportLog] = useState<string[]>([]);
   const [importingStaff, setImportingStaff] = useState(false);
@@ -96,6 +100,8 @@ export default function Create() {
 
   // student import state (Excel)
   const [studentImportFile, setStudentImportFile] = useState<File | null>(null);
+  const [studentPreviewData, setStudentPreviewData] = useState<any[] | null>(null);
+  const [studentPreviewVisible, setStudentPreviewVisible] = useState(false);
   const [studentImportLog, setStudentImportLog] = useState<string[]>([]);
   const [importingStudents, setImportingStudents] = useState(false);
   const [studentImportAck, setStudentImportAck] = useState<string | null>(null);
@@ -251,8 +257,7 @@ export default function Create() {
     setCreatingStaff(true);
     setError(null);
     try {
-      const dobVal = newStaffDob || '1990-01-01';
-      const defaultPassword = dobVal.replace(/-/g, '');
+      const defaultPassword = 'Password123!';
 
       // Faculty ID is required
       if (!newStaffFacultyId.trim()) return setError('Faculty ID is required');
@@ -262,7 +267,7 @@ export default function Create() {
         email: newStaffEmail.trim(),
         faculty_id: newStaffFacultyId.trim(),
         designation: newStaffRole,
-        date_of_joining: dobVal,
+        date_of_joining: newStaffDob || '1990-01-01',
         password: defaultPassword,
       };
 
@@ -450,6 +455,64 @@ export default function Create() {
     }
   }
 
+  const parseExcelFile = async (file: File) => {
+    try {
+      const mod: any = await import('xlsx')
+      const XLSX = mod && (mod.default || mod)
+      const arrayBuffer = await file.arrayBuffer()
+      const wb = XLSX.read(arrayBuffer, { type: 'array' })
+      const first = wb.SheetNames[0]
+      const sheet = wb.Sheets[first]
+      const json = XLSX.utils.sheet_to_json(sheet, { defval: '' })
+      return json
+    } catch (e) {
+      console.error('Failed to parse Excel file', e)
+      throw e
+    }
+  }
+
+  const handlePreviewStudents = async () => {
+    if (!studentImportFile) return setError('Please select an Excel file to preview')
+    try {
+      const rows = await parseExcelFile(studentImportFile)
+      setStudentPreviewData(rows)
+      setStudentPreviewVisible(true)
+    } catch (e:any) {
+      setError('Failed to parse student file for preview')
+    }
+  }
+
+  const handleConfirmStudentsImport = async () => {
+    setStudentPreviewVisible(false)
+    await handleUploadStudents()
+  }
+
+  const handleCancelStudentsPreview = () => {
+    setStudentPreviewVisible(false)
+    setStudentPreviewData(null)
+  }
+
+  const handlePreviewStaff = async () => {
+    if (!staffImportFile) return setError('Please select an Excel file to preview')
+    try {
+      const rows = await parseExcelFile(staffImportFile)
+      setStaffPreviewData(rows)
+      setStaffPreviewVisible(true)
+    } catch (e:any) {
+      setError('Failed to parse staff file for preview')
+    }
+  }
+
+  const handleConfirmStaffImport = async () => {
+    setStaffPreviewVisible(false)
+    await handleUploadStaff()
+  }
+
+  const handleCancelStaffPreview = () => {
+    setStaffPreviewVisible(false)
+    setStaffPreviewData(null)
+  }
+
   const downloadCSV = (filename: string, headers: string[], sample?: string[]) => {
     const rows = [headers]
     if (sample) rows.push(sample)
@@ -625,6 +688,9 @@ export default function Create() {
         designation: 'hod',
         password: defaultPassword,
       };
+      // attach department mapping when selected (convert name -> id)
+      const deptId = deptNameToId[newHodDepartment];
+      if (deptId) payload.department = deptId;
       const result = await api.post('/staff/create/', payload);
       console.log('HOD created successfully:', result.data || result);
       const dResp = await api.get('/departments/');
@@ -633,6 +699,7 @@ export default function Create() {
       setNewHodName('');
       setNewHodEmail('');
       setNewHodDob('');
+      setNewHodDepartment('');
       alert(`HOD created successfully!\nEmail: ${newHodEmail.trim()}\nPassword: ${defaultPassword}\n(User can now log in)`);
     } catch (err: any) {
       console.error('Error creating HOD:', err);
@@ -657,6 +724,8 @@ export default function Create() {
         designation: 'ahod',
         password: defaultPassword,
       };
+      const deptId = deptNameToId[newAhodDepartment];
+      if (deptId) payload.department = deptId;
       const result = await api.post('/staff/create/', payload);
       console.log('AHOD created successfully:', result.data || result);
       const dResp = await api.get('/departments/');
@@ -665,6 +734,7 @@ export default function Create() {
       setNewAhodName('');
       setNewAhodEmail('');
       setNewAhodDob('');
+      setNewAhodDepartment('');
       alert(`AHOD created successfully!\nEmail: ${newAhodEmail.trim()}\nPassword: ${defaultPassword}\n(User can now log in)`);
     } catch (err: any) {
       console.error('Error creating AHOD:', err);
@@ -724,6 +794,7 @@ export default function Create() {
     { label: 'Manage Staff', path: '/admin/staff', icon: null },
     { label: 'Create', path: '/admin/create', icon: null },
     { label: 'Views', path: '/admin/views', icon: null },
+    { label: 'Add Curriculum', path: '/admin/add-curriculum', icon: null },
   ];
 
   return (
@@ -746,6 +817,7 @@ export default function Create() {
                 <button onClick={handleUploadStudents} disabled={importingStudents} className="py-2 px-4 bg-indigo-600 text-white rounded hover:bg-indigo-700">
                   {importingStudents ? 'Importing...' : 'Upload Students'}
                 </button>
+                <button onClick={handlePreviewStudents} disabled={importingStudents} className="py-2 px-3 bg-slate-100 border rounded hover:bg-slate-200 text-sm">Preview</button>
                 <button type="button" onClick={() => downloadStudentTemplate()} className="py-2 px-3 bg-slate-100 border rounded hover:bg-slate-200 text-sm">Download template</button>
               </div>
               {studentImportAck && (
@@ -763,6 +835,35 @@ export default function Create() {
               </ul>
             </div>
           )}
+          {studentPreviewVisible && studentPreviewData && (
+            <div className="mt-4 bg-white border rounded p-3">
+              <h4 className="font-medium mb-2">Preview Student Import ({studentPreviewData.length} rows)</h4>
+              <div className="overflow-x-auto max-h-64 overflow-y-auto border rounded">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50 sticky top-0">
+                    <tr>
+                      {Object.keys(studentPreviewData[0] || {}).map((k) => (
+                        <th key={k} className="px-2 py-1 text-left">{k}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {studentPreviewData.map((row, idx) => (
+                      <tr key={idx} className="border-t">
+                        {Object.keys(studentPreviewData[0] || {}).map((k) => (
+                          <td key={k} className="px-2 py-1">{String((row as any)[k] ?? '')}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="mt-2 flex justify-end space-x-2">
+                <button onClick={handleCancelStudentsPreview} className="px-3 py-1 border rounded">Cancel</button>
+                <button onClick={handleConfirmStudentsImport} className="px-3 py-1 bg-indigo-600 text-white rounded">Confirm Import</button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Bulk import staff via Excel */}
@@ -777,6 +878,7 @@ export default function Create() {
                 <button onClick={handleUploadStaff} disabled={importingStaff} className="py-2 px-4 bg-green-600 text-white rounded hover:bg-green-700">
                   {importingStaff ? 'Importing...' : 'Upload Staff'}
                 </button>
+                <button onClick={handlePreviewStaff} disabled={importingStaff} className="py-2 px-3 bg-slate-100 border rounded hover:bg-slate-200 text-sm">Preview</button>
                 <button type="button" onClick={() => downloadStaffTemplate()} className="py-2 px-3 bg-slate-100 border rounded hover:bg-slate-200 text-sm">Download template</button>
               </div>
               {staffImportAck && (
@@ -792,6 +894,35 @@ export default function Create() {
               <ul className="text-sm list-disc pl-5">
                 {staffImportLog.map((l, idx) => <li key={idx} className="text-slate-700">{l}</li>)}
               </ul>
+            </div>
+          )}
+          {staffPreviewVisible && staffPreviewData && (
+            <div className="mt-4 bg-white border rounded p-3">
+              <h4 className="font-medium mb-2">Preview Staff Import ({staffPreviewData.length} rows)</h4>
+              <div className="overflow-x-auto max-h-64 overflow-y-auto border rounded">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50 sticky top-0">
+                    <tr>
+                      {Object.keys(staffPreviewData[0] || {}).map((k) => (
+                        <th key={k} className="px-2 py-1 text-left">{k}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {staffPreviewData.map((row, idx) => (
+                      <tr key={idx} className="border-t">
+                        {Object.keys(staffPreviewData[0] || {}).map((k) => (
+                          <td key={k} className="px-2 py-1">{String((row as any)[k] ?? '')}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="mt-2 flex justify-end space-x-2">
+                <button onClick={handleCancelStaffPreview} className="px-3 py-1 border rounded">Cancel</button>
+                <button onClick={handleConfirmStaffImport} className="px-3 py-1 bg-green-600 text-white rounded">Confirm Import</button>
+              </div>
             </div>
           )}
         </div>
@@ -1035,6 +1166,71 @@ export default function Create() {
               </button>
             </div>
           </form>
+        </div>
+
+        {/* Create HOD / AHOD credentials */}
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-6">
+          <h3 className="text-md font-medium mb-3">Create HOD / AHOD Credentials</h3>
+          <p className="text-sm text-slate-600 mb-3">Create a Head/AHOD account and map to a department. Default password: <strong>Password123!</strong></p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="p-4 border rounded">
+              <h4 className="font-medium mb-2">Create HOD</h4>
+              <div className="space-y-2">
+                <div>
+                  <label className="block text-sm text-slate-600 mb-1">Name *</label>
+                  <input value={newHodName} onChange={(e) => setNewHodName(e.target.value)} className="w-full px-3 py-2 border rounded" />
+                </div>
+                <div>
+                  <label className="block text-sm text-slate-600 mb-1">Email *</label>
+                  <input value={newHodEmail} onChange={(e) => setNewHodEmail(e.target.value)} className="w-full px-3 py-2 border rounded" />
+                </div>
+                <div>
+                  <label className="block text-sm text-slate-600 mb-1">Department</label>
+                  <select value={newHodDepartment} onChange={(e) => setNewHodDepartment(e.target.value)} className="w-full px-3 py-2 border rounded">
+                    <option value="">— Select Department —</option>
+                    {staffDepartments.map((d) => (<option key={d} value={d}>{d}</option>))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm text-slate-600 mb-1">Date of birth</label>
+                  <input type="date" value={newHodDob} onChange={(e) => setNewHodDob(e.target.value)} className="w-full px-3 py-2 border rounded" />
+                </div>
+                <div className="flex items-center space-x-2">
+                  <button onClick={handleCreateHod} disabled={creatingHod} className="py-2 px-4 bg-indigo-600 text-white rounded hover:bg-indigo-700">{creatingHod ? 'Creating...' : 'Create HOD'}</button>
+                  <button onClick={() => { setNewHodName(''); setNewHodEmail(''); setNewHodDob(''); setNewHodDepartment(''); }} className="py-2 px-4 border rounded">Reset</button>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-4 border rounded">
+              <h4 className="font-medium mb-2">Create AHOD</h4>
+              <div className="space-y-2">
+                <div>
+                  <label className="block text-sm text-slate-600 mb-1">Name *</label>
+                  <input value={newAhodName} onChange={(e) => setNewAhodName(e.target.value)} className="w-full px-3 py-2 border rounded" />
+                </div>
+                <div>
+                  <label className="block text-sm text-slate-600 mb-1">Email *</label>
+                  <input value={newAhodEmail} onChange={(e) => setNewAhodEmail(e.target.value)} className="w-full px-3 py-2 border rounded" />
+                </div>
+                <div>
+                  <label className="block text-sm text-slate-600 mb-1">Department</label>
+                  <select value={newAhodDepartment} onChange={(e) => setNewAhodDepartment(e.target.value)} className="w-full px-3 py-2 border rounded">
+                    <option value="">— Select Department —</option>
+                    {staffDepartments.map((d) => (<option key={d} value={d}>{d}</option>))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm text-slate-600 mb-1">Date of birth</label>
+                  <input type="date" value={newAhodDob} onChange={(e) => setNewAhodDob(e.target.value)} className="w-full px-3 py-2 border rounded" />
+                </div>
+                <div className="flex items-center space-x-2">
+                  <button onClick={handleCreateAhod} disabled={creatingAhod} className="py-2 px-4 bg-indigo-600 text-white rounded hover:bg-indigo-700">{creatingAhod ? 'Creating...' : 'Create AHOD'}</button>
+                  <button onClick={() => { setNewAhodName(''); setNewAhodEmail(''); setNewAhodDob(''); setNewAhodDepartment(''); }} className="py-2 px-4 border rounded">Reset</button>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
 
         {/* Create department form */}

@@ -11,9 +11,22 @@ User = get_user_model()
 
 
 class CourseSerializer(serializers.ModelSerializer):
+    total_marks = serializers.ReadOnlyField()
+    target_departments = serializers.PrimaryKeyRelatedField(
+        many=True,
+        queryset=Department.objects.all(),
+        required=False
+    )
+    
     class Meta:
         model = Course
-        fields = ['id', 'name', 'code', 'department', 'credits', 'created_at', 'updated_at']
+        fields = [
+            'id', 'name', 'code', 'semester', 'admin_department_name',
+            'target_departments', 'class_types', 'category',
+            'L', 'T', 'P', 'S', 'C',
+            'internal_marks', 'external_marks', 'total_marks',
+            'created_at', 'updated_at'
+        ]
 
 
 class StudentProfileSerializer(serializers.ModelSerializer):
@@ -64,7 +77,7 @@ class StaffProfileSerializer(serializers.ModelSerializer):
 class DepartmentSerializer(serializers.ModelSerializer):
     class Meta:
         model = Department
-        fields = ['id', 'name', 'code']
+        fields = ['id', 'name', 'code', 'type', 'parent']
 
 
 class StudentCreateSerializer(serializers.ModelSerializer):

@@ -19,6 +19,39 @@ class CourseViewSet(viewsets.ModelViewSet):
     queryset = Course.objects.all()
     serializer_class = CourseSerializer
 
+    def get_queryset(self):
+        """
+        Optionally filter courses by semester or department.
+        Examples:
+            ?semester=3
+            ?department=5 (filters by target_departments)
+        """
+        queryset = Course.objects.all().prefetch_related('target_departments')
+        
+        # Filter by semester
+        semester = self.request.query_params.get('semester', None)
+        if semester is not None:
+            queryset = queryset.filter(semester=semester)
+        
+        # Filter by target department
+        department = self.request.query_params.get('department', None)
+        if department is not None:
+            queryset = queryset.filter(target_departments__id=department).distinct()
+        
+        return queryset
+    
+    def create(self, request, *args, **kwargs):
+        """
+        Override create to ensure proper handling of target_departments.
+        The serializer should handle the ManyToMany relationship correctly,
+        but we ensure proper response format here.
+        """
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        headers = self.get_success_headers(serializer.data)
+        return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+
 
 class StudentProfileViewSet(viewsets.ModelViewSet):
     queryset = StudentProfile.objects.select_related('user', 'department').all()
@@ -133,6 +166,13 @@ class BulkImportStudentsView(APIView):
                         department_name = ''
                     year = int(row['year']) if not pd.isna(row['year']) else 1
                     section = str(row['section']).strip() if not pd.isna(row['section']) else ''
+                    # optional roll_no column
+                    roll_no = None
+                    if 'roll_no' in df.columns and not pd.isna(row.get('roll_no')):
+                        try:
+                            roll_no = str(row.get('roll_no')).strip()
+                        except Exception:
+                            roll_no = str(row.get('roll_no'))
 
                     # Try to find existing student by reg_no first; if found, update that record
                     student_profile = None
@@ -186,6 +226,8 @@ class BulkImportStudentsView(APIView):
                         student_profile.year = year
                         student_profile.section = section or student_profile.section
                         student_profile.reg_no = reg_no
+                        if roll_no:
+                            student_profile.roll_no = roll_no
                         try:
                             student_profile.save()
                             updated_count += 1
@@ -227,6 +269,7 @@ class BulkImportStudentsView(APIView):
                         student_profile = StudentProfile.objects.create(
                             user=user,
                             reg_no=reg_no,
+                            roll_no=roll_no if roll_no else None,
                             name=name,
                             department=department,
                             year=year,
@@ -279,7 +322,7 @@ class BulkImportStudentsView(APIView):
 class BulkImportStaffView(APIView):
     """
     API endpoint to bulk import staff from an Excel file.
-    Expected columns: name, email, faculty_id, department_code, designation
+    Expected columns (flexible): id|faculty_id, name, dept|department|department_code, role|designation, qualification, date of joining
     """
 
     def post(self, request, *args, **kwargs):
@@ -303,13 +346,23 @@ class BulkImportStaffView(APIView):
             # Read the Excel file using pandas
             df = pd.read_excel(file)
             
-            # Validate required columns
-            required_columns = ['name', 'email', 'faculty_id', 'department_code', 'designation']
-            missing_columns = [col for col in required_columns if col not in df.columns]
-            
-            if missing_columns:
+            # Normalize column names to simple keys (lowercase, spaces -> underscores)
+            normalized_cols = {col: col for col in df.columns}
+            key_map = {}
+            for col in df.columns:
+                key = str(col).strip().lower().replace(' ', '_')
+                key_map[key] = col
+
+            # Accept faculty id column named 'faculty_id' or 'id'
+            faculty_col = None
+            if 'faculty_id' in key_map:
+                faculty_col = key_map['faculty_id']
+            elif 'id' in key_map:
+                faculty_col = key_map['id']
+
+            if not faculty_col:
                 return Response(
-                    {'error': f'Missing required columns: {", ".join(missing_columns)}'},
+                    {'error': "Missing required column: 'faculty_id' or 'id'"},
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
@@ -320,54 +373,182 @@ class BulkImportStaffView(APIView):
             # Iterate through rows
             for index, row in df.iterrows():
                 try:
-                    # Skip rows with missing critical data
-                    if pd.isna(row['email']) or pd.isna(row['faculty_id']):
-                        errors.append(f"Row {index + 2}: Missing email or faculty_id")
+                    # Read faculty id (required)
+                    raw_faculty = row.get(faculty_col)
+                    if pd.isna(raw_faculty):
+                        errors.append(f"Row {index + 2}: Missing faculty id")
                         continue
+                    faculty_id = str(raw_faculty).strip()
 
-                    email = str(row['email']).strip()
-                    faculty_id = str(row['faculty_id']).strip()
-                    name = str(row['name']).strip() if not pd.isna(row['name']) else ''
-                    department_code = str(row['department_code']).strip() if not pd.isna(row['department_code']) else ''
-                    designation = str(row['designation']).strip() if not pd.isna(row['designation']) else ''
+                    # Helper to fetch optional fields if present
+                    def get_field(possible_keys):
+                        for k in possible_keys:
+                            if k in key_map:
+                                raw = row.get(key_map[k])
+                                if pd.isna(raw):
+                                    return None
+                                return str(raw).strip()
+                        return None
 
-                    # Get or create User
-                    user, user_created = User.objects.get_or_create(
-                        email=email,
-                        defaults={
-                            'username': email,
-                            'is_faculty': True
-                        }
-                    )
-                    
-                    # Set password to faculty_id if user was just created
-                    if user_created:
-                        user.set_password(faculty_id)
-                        user.is_faculty = True
-                        user.save()
+                    email = get_field(['email'])
+                    name = get_field(['name']) or ''
+                    # department may be provided as code or name under keys dept, department_code, department
+                    dept_val = get_field(['department_code', 'dept', 'department'])
+                    designation = get_field(['designation', 'role', 'position'])
+                    qualification = get_field(['qualification'])
+                    doj = get_field(['date_of_joining', 'date', 'date_of_joining', 'date_of_joining'])
 
-                    # Get Department instance
-                    try:
-                        department = Department.objects.get(code=department_code)
-                    except Department.DoesNotExist:
-                        errors.append(f"Row {index + 2}: Department with code '{department_code}' not found")
-                        continue
+                    # parse date_of_joining into a Python date if possible
+                    parsed_doj = None
+                    if doj:
+                        try:
+                            # sanitize common curly quotes and extra whitespace
+                            if isinstance(doj, str):
+                                clean = doj.replace('“', '"').replace('”', '"').strip().strip('"')
+                            else:
+                                clean = doj
+                            # use pandas to_datetime for robust parsing
+                            ts = pd.to_datetime(clean, errors='coerce')
+                            if not pd.isna(ts):
+                                # convert to date object (DateField expects date)
+                                try:
+                                    parsed_doj = ts.date()
+                                except Exception:
+                                    # fallback for numpy/pandas types
+                                    parsed_doj = ts.to_pydatetime().date()
+                        except Exception:
+                            parsed_doj = None
 
-                    # Create or Update StaffProfile
-                    staff_profile, profile_created = StaffProfile.objects.update_or_create(
-                        user=user,
-                        defaults={
-                            'faculty_id': faculty_id,
-                            'name': name,
-                            'department': department,
-                            'designation': designation
-                        }
-                    )
+                    # Find existing staff by faculty_id
+                    staff_profile = StaffProfile.objects.filter(faculty_id=faculty_id).select_related('user', 'department').first()
 
-                    if profile_created:
-                        created_count += 1
+                    user = None
+                    user_created = False
+
+                    # If email provided, try to get/create user by email, otherwise if staff_profile exists use its user
+                    if email:
+                        user, user_created = User.objects.get_or_create(
+                            email=email,
+                            defaults={
+                                'username': email,
+                                'is_faculty': True
+                            }
+                        )
+                        if user_created:
+                            try:
+                                user.set_password(faculty_id)
+                                user.is_faculty = True
+                                user.save()
+                            except Exception:
+                                pass
+                    elif staff_profile:
+                        user = staff_profile.user
                     else:
-                        updated_count += 1
+                        # No email and no existing profile: create a placeholder user using faculty_id
+                        placeholder_email = f"{faculty_id}@noemail.local"
+                        user, user_created = User.objects.get_or_create(
+                            email=placeholder_email,
+                            defaults={
+                                'username': placeholder_email,
+                                'is_faculty': True
+                            }
+                        )
+                        if user_created:
+                            try:
+                                user.set_password(faculty_id)
+                                user.is_faculty = True
+                                user.save()
+                            except Exception:
+                                pass
+
+                    # Resolve department if provided; if missing, leave unchanged for updates
+                    department = None
+                    if dept_val:
+                        # try code first
+                        try:
+                            department = Department.objects.get(code=dept_val)
+                        except Department.DoesNotExist:
+                            try:
+                                department = Department.objects.get(name=dept_val)
+                            except Department.DoesNotExist:
+                                errors.append(f"Row {index + 2}: Department '{dept_val}' not found")
+                                continue
+
+                    # Create or update staff profile
+                    if staff_profile:
+                        # Update only non-empty fields
+                        if name:
+                            staff_profile.name = name
+                        if department is not None:
+                            staff_profile.department = department
+                        if designation:
+                            staff_profile.designation = designation
+                        if qualification:
+                            staff_profile.qualification = qualification
+                        if parsed_doj:
+                            try:
+                                staff_profile.date_of_joining = parsed_doj
+                            except Exception:
+                                pass
+
+                        # update faculty_id if different (unlikely)
+                        staff_profile.faculty_id = faculty_id
+
+                        # Update related user email if provided and different
+                        if email and getattr(user, 'email', None) != email:
+                            try:
+                                user.email = email
+                                if hasattr(user, 'USERNAME_FIELD') and user.USERNAME_FIELD != 'email':
+                                    setattr(user, user.USERNAME_FIELD, email)
+                                user.save()
+                            except Exception:
+                                pass
+
+                        try:
+                            staff_profile.save()
+                            updated_count += 1
+                        except Exception as e:
+                            errors.append(f"Row {index + 2}: Failed to update staff: {str(e)}")
+                        continue
+
+                    # No existing staff profile: create one
+                    try:
+                        staff_profile = StaffProfile.objects.create(
+                            user=user,
+                            faculty_id=faculty_id,
+                            name=name,
+                            department=department,
+                            designation=designation or '',
+                            qualification=qualification or ''
+                        )
+                        # try to set date_of_joining if model supports it (use parsed date)
+                        if parsed_doj:
+                            try:
+                                staff_profile.date_of_joining = parsed_doj
+                                staff_profile.save()
+                            except Exception:
+                                pass
+                        created_count += 1
+                    except Exception as e:
+                        # fallback to update_or_create
+                        try:
+                            staff_profile, profile_created = StaffProfile.objects.update_or_create(
+                                faculty_id=faculty_id,
+                                defaults={
+                                    'user': user,
+                                    'name': name,
+                                    'department': department,
+                                    'designation': designation or '',
+                                    'qualification': qualification or ''
+                                }
+                            )
+                            if profile_created:
+                                created_count += 1
+                            else:
+                                updated_count += 1
+                        except Exception as e2:
+                            errors.append(f"Row {index + 2}: Failed to create/update staff: {str(e2)}")
+                            continue
 
                 except Exception as e:
                     errors.append(f"Row {index + 2}: {str(e)}")

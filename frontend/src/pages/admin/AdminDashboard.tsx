@@ -17,6 +17,8 @@ export default function AdminDashboard() {
     { label: 'Manage Staff', path: '/admin/staff', icon: <UserPlus className="h-5 w-5" /> },
     { label: 'Create', path: '/admin/create', icon: <UserPlus className="h-5 w-5" /> },
     { label: 'Views', path: '/admin/views', icon: <FileText className="h-5 w-5" /> },
+    { label: 'Curriculum', path: '/admin/curriculum', icon: null },
+    { label: 'Add Curriculum', path: '/admin/add-curriculum', icon: null },
     { label: 'Notices', path: '/notices', icon: <Megaphone className="h-5 w-5" /> },
   ];
 
