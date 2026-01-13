@@ -212,7 +212,11 @@ export default function HodCurriculum() {
         if (resp) {
           // Log full response for debugging
           console.error('Server response for failed proposal:', resp)
-          if (typeof resp === 'string') text = resp
+          // If this is a DRF field error for `code`, show a clear alert
+          if (resp && resp.code) {
+            alert(`❌ Failed: Course Code "${payload.code}" already exists.`)
+            text = `code: ${Array.isArray(resp.code) ? resp.code.join(', ') : String(resp.code)}`
+          } else if (typeof resp === 'string') text = resp
           else if (Array.isArray(resp)) text = resp.join('; ')
           else if (typeof resp === 'object') {
             // pick first field error to show succinctly

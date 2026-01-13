@@ -380,8 +380,28 @@ class BulkImportStudentsView(APIView):
             # department can be provided as 'department_code' or 'department' (name)
             has_dept_code = 'department_code' in df.columns
             has_dept_name = 'department' in df.columns
+
+            # If department column missing, attempt to infer from filename (e.g., 'CSE_2024_students.xlsx')
+            default_department = None
             if not (has_dept_code or has_dept_name):
-                missing_columns.append('department_code or department')
+                try:
+                    lower_name = file.name.lower() if file and hasattr(file, 'name') else ''
+                    # look for department code or name appearing in filename
+                    deps = Department.objects.all()
+                    matches = []
+                    for d in deps:
+                        if d.code and d.code.lower() in lower_name:
+                            matches.append(d)
+                        elif d.name and d.name.lower().replace(' ', '_') in lower_name:
+                            matches.append(d)
+                    if len(matches) == 1:
+                        default_department = matches[0]
+                        # treat as if department column present with this code
+                        has_dept_code = True
+                    else:
+                        missing_columns.append('department_code or department')
+                except Exception:
+                    missing_columns.append('department_code or department')
 
             if missing_columns:
                 return Response(
@@ -393,7 +413,32 @@ class BulkImportStudentsView(APIView):
             updated_count = 0
             errors = []
 
+            # Normalize header keys for flexible DOB handling
+            def find_column_by_names(cols, candidates):
+                for c in cols:
+                    if str(c).strip().lower() in [x.lower() for x in candidates]:
+                        return c
+                return None
+
+            dob_col = find_column_by_names(df.columns, ['dob', 'date_of_birth', 'date of birth', 'date'])
+
             # Iterate through rows
+            # If department not provided per-row, attempt to infer from filename
+            default_department = None
+            try:
+                lower_name = file.name.lower() if file and hasattr(file, 'name') else ''
+                deps = Department.objects.all()
+                matches = []
+                for d in deps:
+                    if d.code and d.code.lower() in lower_name:
+                        matches.append(d)
+                    elif d.name and d.name.lower().replace(' ', '_') in lower_name:
+                        matches.append(d)
+                if len(matches) == 1:
+                    default_department = matches[0]
+            except Exception:
+                default_department = None
+
             for index, row in df.iterrows():
                 try:
                     # Skip rows with missing critical data (reg_no required)
@@ -421,17 +466,35 @@ class BulkImportStudentsView(APIView):
                         email = f"{reg_no}@noemail.local"
                     name = str(row['name']).strip() if not pd.isna(row['name']) else ''
                     # support either department_code or department (name)
-                    if has_dept_code and not pd.isna(row['department_code']):
+                    if has_dept_code and 'department_code' in df.columns and not pd.isna(row['department_code']):
                         department_code = str(row['department_code']).strip()
                         department_name = ''
-                    elif has_dept_name and not pd.isna(row['department']):
+                    elif has_dept_name and 'department' in df.columns and not pd.isna(row['department']):
                         department_name = str(row['department']).strip()
                         department_code = ''
                     else:
-                        department_code = ''
-                        department_name = ''
+                        # fallback to default inferred department from filename if available
+                        if default_department:
+                            department = default_department
+                            department_code = department.code if department and getattr(department, 'code', None) else ''
+                            department_name = department.name if department and getattr(department, 'name', None) else ''
+                        else:
+                            department_code = ''
+                            department_name = ''
                     year = int(row['year']) if not pd.isna(row['year']) else 1
                     section = str(row['section']).strip() if not pd.isna(row['section']) else ''
+                    # parse DOB if provided
+                    parsed_dob = None
+                    if dob_col and not pd.isna(row.get(dob_col)):
+                        try:
+                            ts = pd.to_datetime(row.get(dob_col), errors='coerce')
+                            if not pd.isna(ts):
+                                try:
+                                    parsed_dob = ts.date()
+                                except Exception:
+                                    parsed_dob = ts.to_pydatetime().date()
+                        except Exception:
+                            parsed_dob = None
                     # optional roll_no column
                     roll_no = None
                     if 'roll_no' in df.columns and not pd.isna(row.get('roll_no')):
@@ -491,6 +554,8 @@ class BulkImportStudentsView(APIView):
                         student_profile.department = department or student_profile.department
                         student_profile.year = year
                         student_profile.section = section or student_profile.section
+                        if parsed_dob:
+                            student_profile.dob = parsed_dob
                         student_profile.reg_no = reg_no
                         if roll_no:
                             student_profile.roll_no = roll_no
@@ -539,7 +604,8 @@ class BulkImportStudentsView(APIView):
                             name=name,
                             department=department,
                             year=year,
-                            section=section
+                            section=section,
+                            dob=parsed_dob
                         )
                         created_count += 1
                     except Exception as e:
@@ -727,7 +793,7 @@ class BulkImportStaffView(APIView):
                             except Exception:
                                 pass
 
-                    # Resolve department if provided; if missing, leave unchanged for updates
+                    # Resolve department if provided; if missing, try default inferred department
                     department = None
                     if dept_val:
                         # try code first
@@ -739,6 +805,8 @@ class BulkImportStaffView(APIView):
                             except Department.DoesNotExist:
                                 errors.append(f"Row {index + 2}: Department '{dept_val}' not found")
                                 continue
+                    elif default_department:
+                        department = default_department
 
                     # Create or update staff profile
                     if staff_profile:

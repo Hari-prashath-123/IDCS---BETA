@@ -2,7 +2,8 @@ import React, { useEffect, useState } from 'react';
 import DashboardLayout from '../../components/DashboardLayout';
 // Supabase removed — use Django backend via `api` instead
 import { useAuth } from '../../context/AuthContext';
-import api from '../../services/api.js';
+import api, { uploadStudentExcel, uploadStaffExcel } from '../../services/api.js';
+import * as XLSX from 'xlsx';
 
 interface ProfileRow {
   id: string;
@@ -57,6 +58,8 @@ export default function Create() {
 
   // form state
   const [newDeptName, setNewDeptName] = useState('');
+  const [parentDept, setParentDept] = useState('');
+  const [deptType, setDeptType] = useState<'ACADEMIC' | 'NON_ACADEMIC'>('ACADEMIC');
   const [hodId, setHodId] = useState<string>('');
   const [ahodId, setAhodId] = useState<string>('');
   const [submitting, setSubmitting] = useState(false);
@@ -69,15 +72,18 @@ export default function Create() {
   const [newHodEmail, setNewHodEmail] = useState('');
   const [newHodDob, setNewHodDob] = useState('');
   const [creatingHod, setCreatingHod] = useState(false);
+  const [newHodDepartment, setNewHodDepartment] = useState('');
 
   const [newAhodName, setNewAhodName] = useState('');
   const [newAhodEmail, setNewAhodEmail] = useState('');
   const [newAhodDob, setNewAhodDob] = useState('');
   const [creatingAhod, setCreatingAhod] = useState(false);
+  const [newAhodDepartment, setNewAhodDepartment] = useState('');
 
   // create Staff state
   const [newStaffName, setNewStaffName] = useState('');
   const [newStaffEmail, setNewStaffEmail] = useState('');
+  const [newStaffFacultyId, setNewStaffFacultyId] = useState('');
   const [newStaffDob, setNewStaffDob] = useState('');
   const [newStaffRole, setNewStaffRole] = useState<'mentor' | 'advisor' | 'lecturer'>('mentor');
   const [newStaffDepartment, setNewStaffDepartment] = useState('');
@@ -86,9 +92,20 @@ export default function Create() {
   const [creatingStaff, setCreatingStaff] = useState(false);
   // staff import state
   const [staffImportFile, setStaffImportFile] = useState<File | null>(null);
-  const [staffImportDept, setStaffImportDept] = useState('');
+  const [staffPreviewData, setStaffPreviewData] = useState<any[] | null>(null);
+  const [staffPreviewVisible, setStaffPreviewVisible] = useState(false);
+  
   const [staffImportLog, setStaffImportLog] = useState<string[]>([]);
   const [importingStaff, setImportingStaff] = useState(false);
+  const [staffImportAck, setStaffImportAck] = useState<string | null>(null);
+
+  // student import state (Excel)
+  const [studentImportFile, setStudentImportFile] = useState<File | null>(null);
+  const [studentPreviewData, setStudentPreviewData] = useState<any[] | null>(null);
+  const [studentPreviewVisible, setStudentPreviewVisible] = useState(false);
+  const [studentImportLog, setStudentImportLog] = useState<string[]>([]);
+  const [importingStudents, setImportingStudents] = useState(false);
+  const [studentImportAck, setStudentImportAck] = useState<string | null>(null);
 
   // create Student state
   const [newStudentName, setNewStudentName] = useState('');
@@ -231,25 +248,22 @@ export default function Create() {
   const handleCreateStaff = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     setNewStaffErrors({});
-    if (!newStaffName.trim() || !newStaffEmail.trim()) return setError('Staff name and email are required');
+    if (!newStaffName.trim()) return setError('Staff name is required');
     if (!newStaffDepartment.trim()) return setError('Department is required for staff');
-    if (newStaffRole === 'advisor') {
-      if (!newStaffYear) return setError('Year is required for advisors');
-      if (!newStaffSection.trim()) return setError('Section is required for advisors');
-    }
+    if (!newStaffFacultyId.trim()) return setError('Faculty ID is required');
 
     setCreatingStaff(true);
     setError(null);
     try {
-      const genStaffId = `STF${Date.now().toString().slice(-6)}`;
       const dobVal = newStaffDob || '1990-01-01';
       const defaultPassword = dobVal.replace(/-/g, '');
 
+      const emailVal = newStaffEmail && newStaffEmail.trim() ? newStaffEmail.trim() : `${newStaffFacultyId.trim()}@noemail.local`;
       const payload: any = {
         name: newStaffName.trim(),
-        email: newStaffEmail.trim(),
-        faculty_id: genStaffId,
-        designation: newStaffRole,
+        email: emailVal,
+        faculty_id: newStaffFacultyId.trim(),
+        designation: 'lecturer',
         date_of_joining: dobVal,
         password: defaultPassword,
       };
@@ -257,11 +271,6 @@ export default function Create() {
       // convert department name to id when possible
       const deptId = deptNameToId[newStaffDepartment];
       if (deptId) payload.department = deptId;
-      // advisor-specific fields
-      if (newStaffRole === 'advisor') {
-        payload.year = Number(newStaffYear);
-        payload.section = newStaffSection.trim().toUpperCase();
-      }
 
       const resp = await api.post('/staff/create/', payload);
       if (resp.status === 201 || resp.status === 200) {
@@ -269,11 +278,9 @@ export default function Create() {
         // reset form
         setNewStaffName('');
         setNewStaffEmail('');
+        setNewStaffFacultyId('');
         setNewStaffDob('');
-        setNewStaffRole('mentor');
         setNewStaffDepartment('');
-        setNewStaffYear(1);
-        setNewStaffSection('');
       }
     } catch (err: any) {
       console.error('Error creating staff:', err);
@@ -439,6 +446,106 @@ export default function Create() {
     }
   };
 
+  // Department creation handler
+  const [newDeptCode, setNewDeptCode] = useState('')
+  const [newDeptType, setNewDeptType] = useState('ACADEMIC')
+  const [newDeptParent, setNewDeptParent] = useState<string | null>(null)
+  const handleCreateDepartment = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault()
+    if (!newDeptName.trim() || !newDeptCode.trim()) return setError('Department name and code required')
+    setError(null)
+    try {
+      const payload: any = {
+        name: newDeptName.trim(),
+        code: newDeptCode.trim(),
+        type: newDeptType,
+      }
+      if (newDeptParent) payload.parent = Number(newDeptParent)
+      const res = await api.post('/departments/', payload)
+      alert('Department created: ' + (res.data?.name || newDeptName))
+      // refresh departments list
+      const dResp = await api.get('/departments/')
+      const deps = dResp.data || []
+      setDepartments((deps || []).map((d: any) => d.name))
+      setNewDeptName('')
+      setNewDeptCode('')
+      setNewDeptParent(null)
+    } catch (err: any) {
+      console.error('Error creating department:', err)
+      setError(err?.response?.data || err?.message || String(err))
+    }
+  }
+
+  // Bulk import handlers (CSV)
+  const handleStaffImport = async () => {
+    if (!staffImportFile) return alert('Select a CSV file to import')
+    setImportingStaff(true)
+    setStaffImportLog([])
+    try {
+      const fd = new FormData()
+      fd.append('file', staffImportFile)
+      // send Excel file to backend import endpoint; backend should detect department from file
+      const data = await uploadStaffExcel(fd)
+      setStaffImportLog(prev => [...prev, 'Import completed: ' + (data?.detail || JSON.stringify(data))])
+      alert('Staff import completed')
+    } catch (err: any) {
+      console.error('Staff import failed:', err)
+      setStaffImportLog(prev => [...prev, 'Import failed: ' + (err?.response?.data || err?.message || String(err))])
+      alert('Staff import failed')
+    } finally {
+      setImportingStaff(false)
+    }
+  }
+
+  const handlePreviewStaff = async () => {
+    if (!staffImportFile) return alert('Select an Excel file to preview');
+    try {
+      const data = await staffImportFile.arrayBuffer();
+      const workbook = XLSX.read(data);
+      const sheetName = workbook.SheetNames[0];
+      const sheet = workbook.Sheets[sheetName];
+      const json = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+      setStaffPreviewData(json as any[]);
+      setStaffPreviewVisible(true);
+    } catch (err: any) {
+      console.error('Failed to parse staff Excel for preview', err);
+      alert('Failed to parse file for preview');
+    }
+  }
+
+  const handleStudentImport = async () => {
+    if (!studentImportFile) return alert('Select an Excel file to import')
+    setImportingStudents(true)
+    try {
+      const fd = new FormData()
+      fd.append('file', studentImportFile)
+      // use helper which posts to /import/students/
+      const data = await uploadStudentExcel(fd)
+      alert('Student import completed: ' + (data?.detail || 'OK'))
+    } catch (err: any) {
+      console.error('Student import failed:', err)
+      alert('Student import failed')
+    } finally {
+      setImportingStudents(false)
+    }
+  }
+
+  const handlePreviewStudent = async () => {
+    if (!studentImportFile) return alert('Select an Excel file to preview');
+    try {
+      const data = await studentImportFile.arrayBuffer();
+      const workbook = XLSX.read(data);
+      const sheetName = workbook.SheetNames[0];
+      const sheet = workbook.Sheets[sheetName];
+      const json = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+      setStudentPreviewData(json as any[]);
+      setStudentPreviewVisible(true);
+    } catch (err: any) {
+      console.error('Failed to parse student Excel for preview', err);
+      alert('Failed to parse file for preview');
+    }
+  }
+
   // Staff CSV import button was previously simplified to use API; keep that behavior
 
   const sidebarItems = [
@@ -485,16 +592,13 @@ export default function Create() {
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div>
-                <label className="block text-sm text-slate-600 mb-1">Staff Role *</label>
-                <select 
-                  value={newStaffRole} 
-                  onChange={(e) => setNewStaffRole(e.target.value as 'mentor' | 'advisor' | 'lecturer')} 
-                  className="w-full px-3 py-2 border rounded"
-                >
-                  <option value="mentor">Mentor</option>
-                  <option value="advisor">Advisor</option>
-                  <option value="lecturer">Lecturer</option>
-                </select>
+                <label className="block text-sm text-slate-600 mb-1">Faculty ID *</label>
+                <input 
+                  value={newStaffFacultyId} 
+                  onChange={(e) => setNewStaffFacultyId(e.target.value)} 
+                  placeholder="e.g., FAC001" 
+                  className="w-full px-3 py-2 border rounded" 
+                />
               </div>
               <div>
                 <label className="block text-sm text-slate-600 mb-1">Department *</label>
@@ -517,34 +621,6 @@ export default function Create() {
               </div>
             </div>
 
-            {/* Show Year and Section only for Advisor */}
-            {newStaffRole === 'advisor' && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-3 bg-blue-50 rounded">
-                <div>
-                  <label className="block text-sm text-slate-700 font-medium mb-1">Year * (Required for Advisor)</label>
-                  <select 
-                    value={newStaffYear} 
-                    onChange={(e) => setNewStaffYear(Number(e.target.value))} 
-                    className="w-full px-3 py-2 border rounded"
-                  >
-                    <option value={1}>Year 1</option>
-                    <option value={2}>Year 2</option>
-                    <option value={3}>Year 3</option>
-                    <option value={4}>Year 4</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm text-slate-700 font-medium mb-1">Section * (Required for Advisor)</label>
-                  <input 
-                    value={newStaffSection} 
-                    onChange={(e) => setNewStaffSection(e.target.value)} 
-                    placeholder="e.g., A, B, C" 
-                    className="w-full px-3 py-2 border rounded" 
-                  />
-                </div>
-              </div>
-            )}
-
             <div className="flex items-center space-x-2">
               <button type="submit" disabled={creatingStaff} className="py-2 px-4 bg-blue-600 text-white rounded hover:bg-blue-700">
                 {creatingStaff ? 'Creating...' : 'Create Staff'}
@@ -554,11 +630,9 @@ export default function Create() {
                 onClick={() => { 
                   setNewStaffName(''); 
                   setNewStaffEmail(''); 
+                  setNewStaffFacultyId(''); 
                   setNewStaffDob(''); 
-                  setNewStaffRole('mentor'); 
                   setNewStaffDepartment(''); 
-                  setNewStaffYear(1); 
-                  setNewStaffSection(''); 
                 }} 
                 className="py-2 px-4 border rounded hover:bg-slate-50"
               >
@@ -688,11 +762,170 @@ export default function Create() {
           </form>
         </div>
 
-        {/* Create department form (omitted rest unchanged) */}
+        {/* Create HOD / AHOD */}
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 mb-6">
+          <h3 className="text-md font-medium mb-3">Create HOD / AHOD</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="p-3 border rounded">
+              <h4 className="font-medium mb-2">Create HOD</h4>
+              <div className="space-y-2">
+                <input value={newHodName} onChange={(e) => setNewHodName(e.target.value)} placeholder="HOD Name" className="w-full px-3 py-2 border rounded" />
+                <input value={newHodEmail} onChange={(e) => setNewHodEmail(e.target.value)} placeholder="HOD Email" className="w-full px-3 py-2 border rounded" />
+                <input type="date" value={newHodDob} onChange={(e) => setNewHodDob(e.target.value)} className="w-full px-3 py-2 border rounded" />
+                <div className="flex space-x-2">
+                  <button onClick={handleCreateHod} disabled={creatingHod} className="px-3 py-1 bg-green-600 text-white rounded">{creatingHod ? 'Creating...' : 'Create HOD'}</button>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-3 border rounded">
+              <h4 className="font-medium mb-2">Create AHOD</h4>
+              <div className="space-y-2">
+                <input value={newAhodName} onChange={(e) => setNewAhodName(e.target.value)} placeholder="AHOD Name" className="w-full px-3 py-2 border rounded" />
+                <input value={newAhodEmail} onChange={(e) => setNewAhodEmail(e.target.value)} placeholder="AHOD Email" className="w-full px-3 py-2 border rounded" />
+                <input type="date" value={newAhodDob} onChange={(e) => setNewAhodDob(e.target.value)} className="w-full px-3 py-2 border rounded" />
+                <div className="flex space-x-2">
+                  <button onClick={handleCreateAhod} disabled={creatingAhod} className="px-3 py-1 bg-green-600 text-white rounded">{creatingAhod ? 'Creating...' : 'Create AHOD'}</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Preview modals/tables */}
+        {staffPreviewVisible && staffPreviewData && (
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 mb-6">
+            <h4 className="font-medium mb-2">Staff Import Preview</h4>
+            <div className="overflow-auto max-h-64 border rounded">
+              <table className="min-w-full text-sm">
+                <thead className="bg-slate-100 sticky top-0">
+                  <tr>
+                    {Object.keys(staffPreviewData[0] || {}).map((h) => (
+                      <th key={h} className="px-2 py-1 text-left">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {staffPreviewData.slice(0, 50).map((row, i) => (
+                    <tr key={i} className="border-t">
+                      {Object.keys(staffPreviewData[0] || {}).map((k) => (
+                        <td key={k} className="px-2 py-1">{String((row as any)[k] ?? '')}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="flex space-x-2 mt-3">
+              <button onClick={() => { setStaffPreviewVisible(false); setStaffPreviewData(null); }} className="px-3 py-1 border rounded">Close Preview</button>
+              <button onClick={handleStaffImport} disabled={importingStaff} className="px-3 py-1 bg-blue-600 text-white rounded">Import These</button>
+            </div>
+          </div>
+        )}
+
+        {studentPreviewVisible && studentPreviewData && (
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 mb-6">
+            <h4 className="font-medium mb-2">Student Import Preview</h4>
+            <div className="overflow-auto max-h-64 border rounded">
+              <table className="min-w-full text-sm">
+                <thead className="bg-slate-100 sticky top-0">
+                  <tr>
+                    {Object.keys(studentPreviewData[0] || {}).map((h) => (
+                      <th key={h} className="px-2 py-1 text-left">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {studentPreviewData.slice(0, 50).map((row, i) => (
+                    <tr key={i} className="border-t">
+                      {Object.keys(studentPreviewData[0] || {}).map((k) => (
+                        <td key={k} className="px-2 py-1">{String((row as any)[k] ?? '')}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="flex space-x-2 mt-3">
+              <button onClick={() => { setStudentPreviewVisible(false); setStudentPreviewData(null); }} className="px-3 py-1 border rounded">Close Preview</button>
+              <button onClick={handleStudentImport} disabled={importingStudents} className="px-3 py-1 bg-purple-600 text-white rounded">Import These</button>
+            </div>
+          </div>
+        )}
+
+        {/* Bulk Imports */}
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 mb-6">
+          <h3 className="text-md font-medium mb-3">Bulk Imports</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="p-3 border rounded">
+              <h4 className="font-medium mb-2">Import Staff</h4>
+              <div className="space-y-2">
+                {/* Department will be auto-detected from the uploaded Excel; no selection required */}
+                <input type="file" accept=".csv,.xls,.xlsx" onChange={(e) => setStaffImportFile(e.target.files?.[0] || null)} className="w-full" />
+                <div className="flex space-x-2">
+                  <button onClick={handlePreviewStaff} className="px-3 py-1 border rounded">Preview</button>
+                  <button onClick={handleStaffImport} disabled={importingStaff} className="px-3 py-1 bg-blue-600 text-white rounded">{importingStaff ? 'Importing...' : 'Import Staff'}</button>
+                </div>
+                <div className="text-sm text-slate-600 mt-2">
+                  {staffImportLog.map((l, i) => <div key={i}>{l}</div>)}
+                </div>
+              </div>
+            </div>
+
+            <div className="p-3 border rounded">
+              <h4 className="font-medium mb-2">Import Students</h4>
+              <div className="space-y-2">
+                <input type="file" accept=".csv,.xls,.xlsx" onChange={(e) => setStudentImportFile(e.target.files?.[0] || null)} className="w-full" />
+                <div className="flex space-x-2">
+                  <button onClick={handlePreviewStudent} className="px-3 py-1 border rounded">Preview</button>
+                  <button onClick={handleStudentImport} disabled={importingStudents} className="px-3 py-1 bg-purple-600 text-white rounded">{importingStudents ? 'Importing...' : 'Import Students'}</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Create department form */}
         <div className="bg-white rounded-xl shadow-lg border border-slate-200 p-6 mb-6">
           <h2 className="text-lg font-semibold mb-4">Create Department</h2>
           {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-2 rounded mb-4">{error}</div>}
-          {/* The rest of the department form is unchanged from previous implementation and omitted for brevity */}
+          <form onSubmit={handleCreateDepartment} className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label className="block text-sm text-slate-600 mb-1">Department Name *</label>
+                <input value={newDeptName} onChange={(e) => setNewDeptName(e.target.value)} placeholder="e.g., Computer Science" className="w-full px-3 py-2 border rounded" />
+              </div>
+              <div>
+                <label className="block text-sm text-slate-600 mb-1">Department Code *</label>
+                <input value={newDeptCode} onChange={(e) => setNewDeptCode(e.target.value)} placeholder="e.g., CSE" className="w-full px-3 py-2 border rounded" />
+              </div>
+              <div>
+                <label className="block text-sm text-slate-600 mb-1">Department Type</label>
+                <select value={newDeptType} onChange={(e) => setNewDeptType(e.target.value)} className="w-full px-3 py-2 border rounded">
+                  <option value="ACADEMIC">ACADEMIC</option>
+                  <option value="NON_ACADEMIC">NON_ACADEMIC</option>
+                  <option value="FIRST_YEAR">FIRST_YEAR</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm text-slate-600 mb-1">Parent Department (optional)</label>
+                <select value={newDeptParent ?? ''} onChange={(e) => setNewDeptParent(e.target.value || null)} className="w-full px-3 py-2 border rounded">
+                  <option value="">— No Parent —</option>
+                  {departments.map((d: any) => {
+                    const id = deptNameToId[d] || '';
+                    return <option key={d} value={id}>{d}</option>
+                  })}
+                </select>
+              </div>
+              <div className="flex items-end space-x-2">
+                <button type="submit" className="px-4 py-2 bg-green-600 text-white rounded">Create Department</button>
+                <button type="button" onClick={() => { setNewDeptName(''); setNewDeptCode(''); setNewDeptParent(null); setNewDeptType('ACADEMIC'); }} className="px-4 py-2 border rounded">Reset</button>
+              </div>
+            </div>
+          </form>
         </div>
       </div>
     </DashboardLayout>
