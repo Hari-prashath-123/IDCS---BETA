@@ -137,47 +137,70 @@ class StaffCreateSerializer(serializers.ModelSerializer):
         email = validated_data.pop('email')
         password = validated_data.pop('password', None) or None
         user_model = User
-        user_kwargs = { 'email': email }
-        if hasattr(user_model, 'USERNAME_FIELD') and user_model.USERNAME_FIELD != 'email':
-            user_kwargs['username'] = email
+        # Reuse existing user if email already exists to avoid UNIQUE constraint failures
+        user = user_model.objects.filter(email=email).first()
 
-        try:
-            user = user_model.objects.create_user(**user_kwargs)
-        except TypeError:
-            user = user_model.objects.create(**user_kwargs)
+        if not user:
+            user_kwargs = { 'email': email }
+            if hasattr(user_model, 'USERNAME_FIELD') and user_model.USERNAME_FIELD != 'email':
+                user_kwargs['username'] = email
 
-        if password:
-            user.set_password(password)
-        if hasattr(user, 'is_staff'):
-            setattr(user, 'is_staff', True)
-        if hasattr(user, 'is_faculty'):
-            setattr(user, 'is_faculty', True)
-        user.save()
+            try:
+                user = user_model.objects.create_user(**user_kwargs)
+            except TypeError:
+                user = user_model.objects.create(**user_kwargs)
+
+            if password:
+                user.set_password(password)
+            # Set basic flags for newly created user
+            if hasattr(user, 'is_staff'):
+                setattr(user, 'is_staff', True)
+            if hasattr(user, 'is_faculty'):
+                setattr(user, 'is_faculty', True)
+            user.save()
+        else:
+            # Existing user found — update basic flags and optionally password if provided
+            if password:
+                try:
+                    user.set_password(password)
+                except Exception:
+                    pass
+            if hasattr(user, 'is_staff'):
+                setattr(user, 'is_staff', True)
+            if hasattr(user, 'is_faculty'):
+                setattr(user, 'is_faculty', True)
+            user.save()
+
+        # Prevent creating duplicate StaffProfile for an existing user
+        from rest_framework import serializers as _serializers
+        if StaffProfile.objects.filter(user=user).exists():
+            raise _serializers.ValidationError({'user': 'StaffProfile already exists for this user'})
 
         staff = StaffProfile.objects.create(user=user, **validated_data)
-        # If the created staff's designation indicates HOD/AHOD, assign department heads
-        try:
-            dept = validated_data.get('department') or getattr(staff, 'department', None)
-            des = (validated_data.get('designation') or getattr(staff, 'designation', '') or '').lower()
-            if dept and des:
-                # normalize department instance: if dept is a PK, resolve it
-                from .models import Department as _Department
-                if not isinstance(dept, _Department):
-                    try:
-                        dept = _Department.objects.get(pk=dept)
-                    except Exception:
-                        dept = None
+        # ---------------------------------------------------------
+        # 3. CRITICAL FIX: Link User to Department as HoD/AHoD
+        # ---------------------------------------------------------
+        department = validated_data.get('department') or getattr(staff, 'department', None)
+        # Safer way to handle potential None values for designation
+        designation = (validated_data.get('designation') or '').lower()
 
-                if dept:
-                    # If designation contains 'hod' but not 'assistant' or 'ahod', set as head_of_department
-                    if 'hod' in des and 'assistant' not in des and 'ahod' not in des:
-                        dept.head_of_department = user
-                        dept.save()
-                    # If designation contains 'ahod' or 'assistant', set as ahod
-                    elif 'ahod' in des or ('assistant' in des and 'hod' in des) or 'assistant' in des:
-                        dept.ahod = user
-                        dept.save()
-        except Exception:
-            # ignore failures while assigning department heads
-            pass
+        if department:
+            # Normalize department: if it's a PK, resolve to model instance
+            from .models import Department as _Department
+            if not isinstance(department, _Department):
+                try:
+                    department = _Department.objects.get(pk=department)
+                except Exception:
+                    department = None
+
+            if department:
+                if 'hod' in designation and 'assistant' not in designation and 'ahod' not in designation:
+                    # Set as Head of Department
+                    department.head_of_department = user
+                    department.save()
+                elif 'ahod' in designation or 'assistant' in designation:
+                    # Set as Assistant Head
+                    department.ahod = user
+                    department.save()
+
         return staff
