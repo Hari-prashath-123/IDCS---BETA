@@ -5,14 +5,17 @@ from rest_framework.response import Response
 from django.core.files.storage import default_storage
 from django.contrib.auth import get_user_model
 
-from .models import Course, StudentProfile, StaffProfile, Department, CourseAllocation
+from .models import Course, StudentProfile, StaffProfile, Department, CourseAllocation, ClassAdvisor, Timetable
 from .serializers import CourseSerializer, StudentProfileSerializer
 from .serializers import StaffProfileSerializer, DepartmentSerializer
 from .serializers import StudentCreateSerializer, StaffCreateSerializer
-from .serializers import CourseAllocationSerializer
+from .serializers import CourseAllocationSerializer, ClassAdvisorSerializer, TimetableSerializer
 
 from rest_framework import generics
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError as DRFValidationError
+from rest_framework.permissions import IsAuthenticated
+from django.db import IntegrityError
 
 User = get_user_model()
 
@@ -676,3 +679,153 @@ class BulkImportStaffView(APIView):
                 {'error': f'Failed to process file: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+class ClassAdvisorViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for managing class advisors.
+    Allows HODs/admins to assign staff as class advisors.
+    Includes custom action for staff to find their assigned classes.
+    """
+    queryset = ClassAdvisor.objects.select_related('department', 'staff', 'staff__user').all()
+    serializer_class = ClassAdvisorSerializer
+    permission_classes = [IsAuthenticated]
+    
+    @action(detail=False, methods=['get'], url_path='my-classes')
+    def my_classes(self, request):
+        """
+        Returns all classes where the current user is the advisor.
+        Used by staff to see which classes they are responsible for.
+        """
+        user = request.user
+        if not user or not user.is_authenticated:
+            return Response(
+                {'detail': 'Authentication required'},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        # Find classes where this user's staff profile is the advisor
+        my_advisorships = ClassAdvisor.objects.filter(
+            staff__user=user
+        ).select_related('department', 'staff')
+        
+        serializer = self.get_serializer(my_advisorships, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        try:
+            serializer.is_valid(raise_exception=True)
+        except DRFValidationError as e:
+            return Response(e.detail, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            self.perform_create(serializer)
+        except IntegrityError as e:
+            return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        headers = self.get_success_headers(serializer.data)
+        return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+
+
+class TimetableViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for managing timetable entries.
+    Supports bulk create/update and filtering by department, batch, section, semester.
+    """
+    queryset = Timetable.objects.select_related('department', 'subject').all()
+    serializer_class = TimetableSerializer
+    # permission_classes = [IsAuthenticated]  # Uncomment to require authentication
+    
+    def get_queryset(self):
+        """
+        Filter timetable entries based on query parameters.
+        Supports: department, batch_year, section, semester
+        """
+        queryset = super().get_queryset()
+        
+        department = self.request.query_params.get('department')
+        if department:
+            queryset = queryset.filter(department_id=department)
+        
+        batch_year = self.request.query_params.get('batch_year')
+        if batch_year:
+            queryset = queryset.filter(batch_year=batch_year)
+        
+        section = self.request.query_params.get('section')
+        if section:
+            queryset = queryset.filter(section=section)
+        
+        semester = self.request.query_params.get('semester')
+        if semester:
+            queryset = queryset.filter(semester=semester)
+        
+        return queryset
+    
+    def create(self, request, *args, **kwargs):
+        """
+        Support bulk create/update of timetable slots.
+        
+        Expected payload:
+        {
+            "slots": [
+                {
+                    "department": 1,
+                    "batch_year": 2024,
+                    "section": "A",
+                    "semester": 1,
+                    "day": "Monday",
+                    "period": 1,
+                    "subject": 5  // or null
+                },
+                ...
+            ]
+        }
+        
+        Or single object for single create.
+        """
+        data = request.data
+        
+        # Check if bulk operation (slots array)
+        if 'slots' in data and isinstance(data['slots'], list):
+            created_count = 0
+            updated_count = 0
+            errors = []
+            
+            for slot_data in data['slots']:
+                try:
+                    # Extract unique identifiers
+                    lookup_fields = {
+                        'department_id': slot_data.get('department'),
+                        'batch_year': slot_data.get('batch_year'),
+                        'section': slot_data.get('section'),
+                        'semester': slot_data.get('semester'),
+                        'day': slot_data.get('day'),
+                        'period': slot_data.get('period'),
+                    }
+                    
+                    # Update or create
+                    obj, created = Timetable.objects.update_or_create(
+                        **lookup_fields,
+                        defaults={'subject_id': slot_data.get('subject')}
+                    )
+                    
+                    if created:
+                        created_count += 1
+                    else:
+                        updated_count += 1
+                        
+                except Exception as e:
+                    errors.append({
+                        'slot': slot_data,
+                        'error': str(e)
+                    })
+            
+            return Response({
+                'created': created_count,
+                'updated': updated_count,
+                'errors': errors if errors else None
+            }, status=status.HTTP_201_CREATED)
+        
+        # Single create - use default behavior
+        return super().create(request, *args, **kwargs)

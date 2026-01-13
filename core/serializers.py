@@ -1,7 +1,7 @@
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 from django.db import IntegrityError
-from .models import StudentProfile, Course, Department, StaffProfile, CourseAllocation
+from .models import StudentProfile, Course, Department, StaffProfile, CourseAllocation, ClassAdvisor, Timetable
 
 
 User = get_user_model()
@@ -251,3 +251,38 @@ class StaffCreateSerializer(serializers.ModelSerializer):
                     department.save()
 
         return staff
+
+
+class ClassAdvisorSerializer(serializers.ModelSerializer):
+    staff_name = serializers.StringRelatedField(source='staff', read_only=True)
+    department_name = serializers.StringRelatedField(source='department', read_only=True)
+    # Expose staff as read-only primary key and accept staff_id for writes
+    staff = serializers.PrimaryKeyRelatedField(read_only=True)
+    staff_id = serializers.PrimaryKeyRelatedField(
+        queryset=StaffProfile.objects.all(),
+        source='staff',
+        write_only=True,
+        required=True
+    )
+    
+    class Meta:
+        model = ClassAdvisor
+        fields = [
+            'id', 'department', 'department_name', 'batch_year', 'section',
+            'staff', 'staff_name', 'staff_id', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['created_at', 'updated_at']
+
+
+class TimetableSerializer(serializers.ModelSerializer):
+    subject_details = CourseSerializer(source='subject', read_only=True)
+    department_name = serializers.StringRelatedField(source='department', read_only=True)
+    
+    class Meta:
+        model = Timetable
+        fields = [
+            'id', 'department', 'department_name', 'batch_year', 'section',
+            'semester', 'day', 'period', 'subject', 'subject_details',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ['created_at', 'updated_at']

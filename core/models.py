@@ -217,3 +217,89 @@ class StaffProfile(TimeStampedModel):
 
     def __str__(self):
         return f"{self.name} ({self.faculty_id})"
+
+
+class ClassAdvisor(TimeStampedModel):
+    """Maps a staff member as advisor for a specific class (department + batch + section)"""
+    department = models.ForeignKey(
+        Department,
+        on_delete=models.CASCADE,
+        related_name='class_advisors',
+        help_text='Department for the class'
+    )
+    batch_year = models.PositiveIntegerField(
+        help_text='Joining year, e.g., 2024'
+    )
+    section = models.CharField(
+        max_length=10,
+        help_text='Section code, e.g., A, B, C'
+    )
+    staff = models.ForeignKey(
+        'StaffProfile',
+        on_delete=models.CASCADE,
+        related_name='advised_classes',
+        help_text='Staff member acting as class advisor'
+    )
+
+    class Meta:
+        unique_together = ['department', 'batch_year', 'section']
+        verbose_name = 'Class Advisor'
+        verbose_name_plural = 'Class Advisors'
+
+    def __str__(self):
+        return f"{self.department.code} - Batch {self.batch_year} - Sec {self.section} - Advisor: {self.staff.name}"
+
+
+class Timetable(TimeStampedModel):
+    """Stores timetable entries for a class (department + batch + section + semester)"""
+    department = models.ForeignKey(
+        Department,
+        on_delete=models.CASCADE,
+        related_name='timetable_entries',
+        help_text='Department for the class'
+    )
+    batch_year = models.PositiveIntegerField(
+        help_text='Joining year, e.g., 2024'
+    )
+    section = models.CharField(
+        max_length=10,
+        help_text='Section code, e.g., A, B, C'
+    )
+    semester = models.PositiveSmallIntegerField(
+        validators=[MinValueValidator(1), MaxValueValidator(8)],
+        help_text='Semester (1-8)'
+    )
+    
+    DAY_CHOICES = [
+        ('Monday', 'Monday'),
+        ('Tuesday', 'Tuesday'),
+        ('Wednesday', 'Wednesday'),
+        ('Thursday', 'Thursday'),
+        ('Friday', 'Friday'),
+    ]
+    day = models.CharField(
+        max_length=10,
+        choices=DAY_CHOICES,
+        help_text='Day of the week'
+    )
+    period = models.PositiveSmallIntegerField(
+        validators=[MinValueValidator(1), MaxValueValidator(7)],
+        help_text='Period number (1-7)'
+    )
+    subject = models.ForeignKey(
+        Course,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='timetable_slots',
+        help_text='Course/subject for this slot'
+    )
+
+    class Meta:
+        unique_together = ['department', 'batch_year', 'section', 'semester', 'day', 'period']
+        verbose_name = 'Timetable Entry'
+        verbose_name_plural = 'Timetable Entries'
+
+    def __str__(self):
+        subject_name = self.subject.code if self.subject else 'Free'
+        return f"{self.department.code} - Batch {self.batch_year} - Sec {self.section} - Sem {self.semester} - {self.day} P{self.period}: {subject_name}"

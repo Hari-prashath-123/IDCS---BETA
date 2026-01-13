@@ -104,6 +104,25 @@ export default function HodCurriculum() {
       })
 
       if (matchesTarget) return true
+
+      // Debug: log why course was excluded for easier troubleshooting
+      try {
+        console.debug('Curriculum filter excluded course', {
+          id: c.id,
+          code: c.code,
+          name: c.name,
+          courseBatch,
+          adminDeptRaw,
+          adminDept,
+          targetsRaw,
+          targetsArr,
+          normalizedUserDept,
+          deptId,
+        })
+      } catch (e) {
+        // ignore logging errors
+      }
+
       return false
     })
   }, [courses, batch, userDept, deptId])

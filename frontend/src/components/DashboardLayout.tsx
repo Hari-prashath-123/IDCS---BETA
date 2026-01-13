@@ -527,41 +527,6 @@ export default function DashboardLayout({
                   },
                   // Department link for HODs will be conditionally inserted below if mapping exists
                   {
-                    label: "OD",
-                    path: "/hod/od",
-                    icon: <FileText className="h-5 w-5" />,
-                  },
-                  {
-                    label: "Leave",
-                    path: "/hod/leave",
-                    icon: <FileText className="h-5 w-5" />,
-                  },
-                  {
-                    label: "Bonafide",
-                    path: "/hod/bonafide",
-                    icon: <Award className="h-5 w-5" />,
-                  },
-                  {
-                    label: "Gatepass",
-                    path: "/hod/gatepass",
-                    icon: <CreditCard className="h-5 w-5" />,
-                  },
-                  {
-                    label: "Certificates",
-                    path: "/hod/certificates",
-                    icon: <Award className="h-5 w-5" />,
-                  },
-                  {
-                    label: "My Mentees",
-                    path: "/hod/mentees",
-                    icon: <User className="h-5 w-5" />,
-                  },
-                  {
-                    label: "Manage Mentees",
-                    path: "/hod/manage-mentees",
-                    icon: <Users className="h-5 w-5" />,
-                  },
-                  {
                     label: "Students",
                     path: "/hod/students",
                     icon: <Users className="h-5 w-5" />,
@@ -585,6 +550,11 @@ export default function DashboardLayout({
                     label: "Manage Semester",
                     path: "/hod/manage-semester-courses",
                     icon: <BookOpen className="h-5 w-5" />,
+                  },
+                  {
+                    label: "Assign Advisors",
+                    path: "/hod/assign-advisors",
+                    icon: <Users className="h-5 w-5" />,
                   },
                   {
                     label: "Staff Leave",
