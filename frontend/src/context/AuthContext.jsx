@@ -123,6 +123,36 @@ export function AuthProvider({ children }) {
           console.debug('AuthProvider: login profile', profile)
           setUser(profile)
 
+          // If backend provided explicit `role`, use it first for routing
+          if (profile && profile.role) {
+            const r = String(profile.role).toLowerCase()
+            if (r === 'admin') {
+              navigate('/admin/dashboard')
+              try { scheduleTokenRefresh(accessToken) } catch (e) {}
+              return profile
+            }
+            if (r === 'hod') {
+              navigate('/hod/dashboard')
+              try { scheduleTokenRefresh(accessToken) } catch (e) {}
+              return profile
+            }
+            if (r === 'ahod') {
+              navigate('/ahod/dashboard')
+              try { scheduleTokenRefresh(accessToken) } catch (e) {}
+              return profile
+            }
+            if (r === 'staff') {
+              navigate('/staff/dashboard')
+              try { scheduleTokenRefresh(accessToken) } catch (e) {}
+              return profile
+            }
+            if (r === 'student') {
+              navigate('/student/dashboard')
+              try { scheduleTokenRefresh(accessToken) } catch (e) {}
+              return profile
+            }
+          }
+
           // robust HoD detection and routing
           const isHodProfile = (p) => {
             if (!p) return false
