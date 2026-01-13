@@ -80,6 +80,26 @@ def current_user(request):
 
     print(f"Final role: {role}, is_hod: {is_hod}, is_ahod: {is_ahod}\n")
     
+    # Include department information to help frontend determine access
+    department_info = None
+    department_admin_for = []
+    try:
+        # If user has a StaffProfile, include their department (id and name)
+        sp = StaffProfile.objects.filter(user=u).first()
+        if sp and sp.department:
+            dept = sp.department
+            department_info = {'id': getattr(dept, 'id', None), 'name': getattr(dept, 'name', ''), 'code': getattr(dept, 'code', '')}
+    except Exception:
+        department_info = None
+
+    try:
+        # If user is HoD for any departments, include that list
+        depts = Department.objects.filter(head_of_department=u)
+        for d in depts:
+            department_admin_for.append({'id': d.id, 'name': d.name, 'code': d.code})
+    except Exception:
+        department_admin_for = []
+
     data = {
         'id': getattr(u, 'id', None),
         'username': getattr(u, 'username', None),
@@ -93,5 +113,7 @@ def current_user(request):
         'role': role,
         'is_hod': is_hod,
         'is_ahod': is_ahod,
+        'department': department_info,
+        'department_admin_for': department_admin_for,
     }
     return Response(data)

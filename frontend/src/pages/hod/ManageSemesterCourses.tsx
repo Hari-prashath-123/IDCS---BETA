@@ -85,25 +85,32 @@ export default function ManageSemesterCourses() {
   }, [])
 
   // Load courses when department changes
-  useEffect(() => {
+  // Load both all courses and active allocation for current inputs
+  const loadCoursesAndActive = async (options?: { showMessage?: boolean }) => {
     if (!deptId) return
+    setLoading(true)
+    try {
+      const courses = await getDepartmentCourses(deptId)
+      const items = Array.isArray(courses) ? courses : courses.results || []
+      setAllCourses(items)
 
-    const loadCourses = async () => {
-      setLoading(true)
-      try {
-        const courses = await getDepartmentCourses(deptId)
-        const items = Array.isArray(courses) ? courses : courses.results || []
-        setAllCourses(items)
-      } catch (e) {
-        console.error('Failed to load courses', e)
-        setMessage({ type: 'error', text: 'Failed to load courses' })
-      } finally {
-        setLoading(false)
-      }
+      const active = await getActiveCourses(deptId, selectedBatch, selectedSemester)
+      const activeIds = Array.isArray(active) ? active.map((c: any) => c.id) : []
+      setCheckedCourseIds(new Set(activeIds))
+      if (options && options.showMessage) setMessage({ type: 'success', text: `Loaded ${activeIds.length} active courses` })
+    } catch (e) {
+      console.error('Failed to load courses or active allocation', e)
+      setMessage({ type: 'error', text: 'Failed to load courses or active allocation' })
+    } finally {
+      setLoading(false)
     }
+  }
 
-    loadCourses()
-  }, [deptId])
+  useEffect(() => {
+    // auto-load when department / batch / semester change
+    loadCoursesAndActive()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deptId, selectedBatch, selectedSemester])
 
   // Load saved allocation
   const handleLoadSaved = async () => {
@@ -139,6 +146,19 @@ export default function ManageSemesterCourses() {
     })
   }
 
+  const handleSelectAllVisible = (checked: boolean) => {
+    if (!filteredCourses || filteredCourses.length === 0) return
+    setCheckedCourseIds((prev) => {
+      const newSet = new Set(prev)
+      if (checked) {
+        filteredCourses.forEach((c) => newSet.add(c.id))
+      } else {
+        filteredCourses.forEach((c) => newSet.delete(c.id))
+      }
+      return newSet
+    })
+  }
+
   // Save configuration
   const handleSaveConfiguration = async () => {
     if (!deptId) {
@@ -155,7 +175,7 @@ export default function ManageSemesterCourses() {
         courses: Array.from(checkedCourseIds),
       }
       await saveSemesterAllocation(data)
-      setMessage({ type: 'success', text: 'Configuration saved successfully!' })
+      setMessage({ type: 'success', text: 'Curriculum Updated Successfully' })
     } catch (e: any) {
       console.error('Failed to save configuration', e)
       setMessage({ type: 'error', text: e.response?.data?.detail || 'Failed to save configuration' })
@@ -307,19 +327,24 @@ export default function ManageSemesterCourses() {
         <div className="bg-white rounded-xl shadow-sm border">
           <div className="p-6 border-b flex justify-between items-center">
             <div>
-              <h2 className="text-xl font-semibold text-gray-900">
-                Courses for Semester {selectedSemester}
-              </h2>
-              <p className="text-sm text-gray-600 mt-1">
-                {checkedCourseIds.size} of {filteredCourses.length} courses selected
-              </p>
+              <h2 className="text-xl font-semibold text-gray-900">Courses for Semester {selectedSemester}</h2>
+              <p className="text-sm text-gray-600 mt-1">{checkedCourseIds.size} of {filteredCourses.length} courses selected</p>
             </div>
-            <button
-              onClick={() => setShowCreateModal(true)}
-              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
-            >
-              Create New Course
-            </button>
+            <div className="flex items-center space-x-3">
+              <button
+                onClick={() => setShowCreateModal(true)}
+                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+              >
+                Create New Course
+              </button>
+              <button
+                onClick={handleSaveConfiguration}
+                disabled={saving}
+                className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {saving ? 'Saving...' : 'Save Changes'}
+              </button>
+            </div>
           </div>
 
           {loading ? (
@@ -333,20 +358,14 @@ export default function ManageSemesterCourses() {
               <table className="w-full">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      <input
-                        type="checkbox"
-                        checked={filteredCourses.length > 0 && filteredCourses.every((c) => checkedCourseIds.has(c.id))}
-                        onChange={(e) => {
-                          if (e.target.checked) {
-                            setCheckedCourseIds(new Set(filteredCourses.map((c) => c.id)))
-                          } else {
-                            setCheckedCourseIds(new Set())
-                          }
-                        }}
-                        className="h-4 w-4 text-indigo-600 rounded"
-                      />
-                    </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          <input
+                            type="checkbox"
+                            checked={filteredCourses.length > 0 && filteredCourses.every((c) => checkedCourseIds.has(c.id))}
+                            onChange={(e) => handleSelectAllVisible(e.target.checked)}
+                            className="h-4 w-4 text-indigo-600 rounded"
+                          />
+                        </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Code
                     </th>
@@ -390,19 +409,7 @@ export default function ManageSemesterCourses() {
           )}
         </div>
 
-        {/* Fixed Save Button */}
-        <div className="fixed bottom-8 right-8">
-          <button
-            onClick={handleSaveConfiguration}
-            disabled={saving || checkedCourseIds.size === 0}
-            className="px-6 py-3 bg-indigo-600 text-white rounded-lg shadow-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
-          >
-            <span>{saving ? 'Saving...' : 'Save Configuration'}</span>
-            {checkedCourseIds.size > 0 && (
-              <span className="bg-indigo-500 px-2 py-1 rounded text-xs">{checkedCourseIds.size}</span>
-            )}
-          </button>
-        </div>
+        {/* Removed fixed save button; primary Save is now in table header */}
 
         {/* Create Course Modal */}
         {showCreateModal && (

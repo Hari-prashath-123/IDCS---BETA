@@ -153,23 +153,24 @@ class CourseAllocationViewSet(viewsets.ModelViewSet):
 
         if not (dept and batch and semester):
             return Response({'detail': 'department, batch_year and semester are required'}, status=status.HTTP_400_BAD_REQUEST)
-
-        allocation, created = CourseAllocation.objects.get_or_create(
-            department_id=dept,
-            batch_year=int(batch),
-            semester=int(semester),
-        )
-
         try:
-            # set courses (allow empty list)
+            # Use update_or_create to obtain the allocation object atomically
+            allocation, created = CourseAllocation.objects.update_or_create(
+                department_id=dept,
+                batch_year=int(batch),
+                semester=int(semester),
+                defaults={}
+            )
+
+            # Replace the courses relation so unchecked courses are removed
             allocation.courses.set(courses)
             allocation.save()
+
+            serializer = CourseAllocationSerializer(allocation)
+            # Always return 200 OK for upserts from the HOD UI
+            return Response(serializer.data, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
-
-        serializer = CourseAllocationSerializer(allocation)
-        status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
-        return Response(serializer.data, status=status_code)
 
     def update(self, request, *args, **kwargs):
         # reuse partial update behavior but ensure bulk course assignment is handled

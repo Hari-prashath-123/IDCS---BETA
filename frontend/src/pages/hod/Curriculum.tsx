@@ -63,28 +63,47 @@ export default function HodCurriculum() {
   const filteredByBatchAndDept = useMemo(() => {
     if (!courses) return []
     const normalizedUserDept = (userDept || '').toString().trim().toLowerCase()
+    
     return courses.filter((c: any) => {
       const courseBatch = c.batch ?? c.BATCH ?? 2023
       if (String(courseBatch) !== String(batch)) return false
+      
       // Robust admin department extraction (handle multiple field names)
       const adminDeptRaw = c.admin_department_name ?? c.admin_department ?? c.admin_dept ?? c.admin_dept_name ?? c.ADMIN_DEPARTMENT_NAME ?? ''
       const adminDept = (adminDeptRaw || '').toString().trim().toLowerCase()
 
-      // If admin department explicitly set to ALL (or missing), consider available to all
-      if (!adminDept || adminDept === 'all') return true
+      // If admin department explicitly set to ALL (or missing/generic), consider available to all
+      if (!adminDept || adminDept === 'all' || adminDept === 'dept') return true
 
       // If admin department matches user's department (case-insensitive), include
       if (normalizedUserDept && adminDept === normalizedUserDept) return true
 
       // Extract target departments from various possible fields
       let targetsRaw: any = c.target_departments ?? c.target_depts ?? c.target_dept ?? c.targets ?? c.TARGET_DEPARTMENTS ?? []
-      let targetsArr: string[] = []
+      let targetsArr: (string | number)[] = []
+      
       if (Array.isArray(targetsRaw)) {
-        targetsArr = targetsRaw.map((t: any) => {
-          if (!t) return ''
-          if (typeof t === 'object') return (t.name || t.code || t.id || '').toString().trim().toLowerCase()
-          return String(t).toString().trim().toLowerCase()
-        }).filter(Boolean)
+        // Flatten array elements - they might be IDs (numbers), objects, or comma-separated strings
+        targetsArr = targetsRaw.flatMap((t: any) => {
+          if (t == null) return []
+          
+          // If it's a number (department ID), keep it as is
+          if (typeof t === 'number') return [t]
+          
+          // If it's an object with id/name/code, extract those
+          if (typeof t === 'object') {
+            if (t.id) return [t.id] // Return the ID if available
+            const name = (t.name || t.code || '').toString().trim().toLowerCase()
+            return name ? [name] : []
+          }
+          
+          // If t is a string, it might be comma-separated like "AI, CSE, EEE"
+          const tStr = String(t).trim()
+          if (tStr.includes(',')) {
+            return tStr.split(/[;,|]/).map(s => s.trim().toLowerCase()).filter(Boolean)
+          }
+          return [tStr.toLowerCase()]
+        }).filter(val => val !== null && val !== undefined && val !== '')
       } else if (typeof targetsRaw === 'string') {
         targetsArr = targetsRaw.split(/[;,|]/).map(s => s.trim().toLowerCase()).filter(Boolean)
       } else if (targetsRaw != null) {
@@ -96,36 +115,41 @@ export default function HodCurriculum() {
       if (!targetsArr || targetsArr.length === 0) return true
 
       // Check if any target matches the user's dept name/code or the deptId
-      const matchesTarget = targetsArr.some((t: string) => {
-        if (!t) return false
-        if (deptId && String(t) === String(deptId)) return true
-        if (t === normalizedUserDept) return true
+      const matchesTarget = targetsArr.some((t: string | number) => {
+        if (t == null || t === '') return false
+        
+        // If target is a number (dept ID), match against user's deptId
+        if (typeof t === 'number') {
+          return deptId && Number(t) === Number(deptId)
+        }
+        
+        // String matching for names/codes
+        const tStr = String(t).toLowerCase()
+        // Match by ID
+        if (deptId && tStr === String(deptId)) return true
+        // Match by normalized name (exact or partial)
+        if (tStr === normalizedUserDept) return true
+        if (normalizedUserDept && tStr.includes(normalizedUserDept)) return true
+        if (normalizedUserDept && normalizedUserDept.includes(tStr)) return true
         return false
       })
 
       if (matchesTarget) return true
-
-      // Debug: log why course was excluded for easier troubleshooting
-      try {
-        console.debug('Curriculum filter excluded course', {
-          id: c.id,
-          code: c.code,
-          name: c.name,
-          courseBatch,
-          adminDeptRaw,
-          adminDept,
-          targetsRaw,
-          targetsArr,
-          normalizedUserDept,
-          deptId,
-        })
-      } catch (e) {
-        // ignore logging errors
-      }
-
       return false
     })
   }, [courses, batch, userDept, deptId])
+  // Debug: expose filtering inputs and results to browser console
+  useEffect(() => {
+    try {
+      const matchedCodes = (filteredByBatchAndDept || []).map((c: any) => c.code || c.code)
+      const allCourseSummaries = (courses || []).map((c: any) => ({ code: c.code, name: c.name, targets: c.target_departments }))
+      // eslint-disable-next-line no-console
+      console.log('Curriculum Debug:', { userDept, deptId, batch, coursesCount: (courses || []).length, matchedCodes, allCourseSummaries })
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('Curriculum debug error', err)
+    }
+  }, [filteredByBatchAndDept, userDept, deptId, batch, courses])
 
   const grouped = useMemo(() => {
     const g: Record<number, any[]> = {}
