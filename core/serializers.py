@@ -1,10 +1,7 @@
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
-
-from .models import StudentProfile, Course
-from .models import Department, StaffProfile
-
-from .models import StaffProfile
+from django.db import IntegrityError
+from .models import StudentProfile, Course, Department, StaffProfile, CourseAllocation
 
 
 User = get_user_model()
@@ -80,6 +77,15 @@ class DepartmentSerializer(serializers.ModelSerializer):
         fields = ['id', 'name', 'code', 'type', 'parent']
 
 
+class CourseAllocationSerializer(serializers.ModelSerializer):
+    department = serializers.PrimaryKeyRelatedField(queryset=Department.objects.all())
+    courses = serializers.PrimaryKeyRelatedField(many=True, queryset=Course.objects.all(), required=False)
+
+    class Meta:
+        model = CourseAllocation
+        fields = ['id', 'department', 'batch_year', 'semester', 'courses', 'created_at', 'updated_at']
+
+
 class StudentCreateSerializer(serializers.ModelSerializer):
     email = serializers.EmailField(write_only=True)
     password = serializers.CharField(write_only=True, required=False, allow_blank=True)
@@ -136,15 +142,15 @@ class StaffCreateSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         email = validated_data.pop('email')
         password = validated_data.pop('password', None) or None
+
+        # 1. Create or Get User
         user_model = User
-        # Reuse existing user if email already exists to avoid UNIQUE constraint failures
         user = user_model.objects.filter(email=email).first()
 
         if not user:
-            user_kwargs = { 'email': email }
+            user_kwargs = {'email': email}
             if hasattr(user_model, 'USERNAME_FIELD') and user_model.USERNAME_FIELD != 'email':
                 user_kwargs['username'] = email
-
             try:
                 user = user_model.objects.create_user(**user_kwargs)
             except TypeError:
@@ -152,14 +158,15 @@ class StaffCreateSerializer(serializers.ModelSerializer):
 
             if password:
                 user.set_password(password)
-            # Set basic flags for newly created user
+
+            # Set flags for new user
             if hasattr(user, 'is_staff'):
                 setattr(user, 'is_staff', True)
             if hasattr(user, 'is_faculty'):
                 setattr(user, 'is_faculty', True)
             user.save()
         else:
-            # Existing user found — update basic flags and optionally password if provided
+            # Update existing user
             if password:
                 try:
                     user.set_password(password)
@@ -171,21 +178,50 @@ class StaffCreateSerializer(serializers.ModelSerializer):
                 setattr(user, 'is_faculty', True)
             user.save()
 
-        # Prevent creating duplicate StaffProfile for an existing user
+        # 2. Create or Update Profile
         from rest_framework import serializers as _serializers
-        if StaffProfile.objects.filter(user=user).exists():
-            raise _serializers.ValidationError({'user': 'StaffProfile already exists for this user'})
+        existing_staff = StaffProfile.objects.filter(user=user).first()
+        
+        # Store department and designation BEFORE updating profile
+        department = validated_data.get('department')
+        designation = validated_data.get('designation', '')
+        
+        if existing_staff:
+            # Update existing staff profile
+            for field, value in validated_data.items():
+                setattr(existing_staff, field, value)
+            try:
+                existing_staff.save()
+                staff = existing_staff
+            except IntegrityError as e:
+                msg = str(e)
+                if 'faculty_id' in msg:
+                    raise _serializers.ValidationError({'faculty_id': 'A staff member with this Faculty ID already exists.'})
+                raise _serializers.ValidationError({'detail': msg})
+        else:
+            # Create new profile
+            try:
+                staff = StaffProfile.objects.create(user=user, **validated_data)
+            except IntegrityError as e:
+                # This catches unique constraint failures (e.g. faculty_id or user)
+                msg = str(e)
+                if 'faculty_id' in msg:
+                    raise _serializers.ValidationError({'faculty_id': 'A staff member with this Faculty ID already exists.'})
+                if 'user_id' in msg or 'user' in msg:
+                    raise _serializers.ValidationError({'user': 'A StaffProfile already exists for this user.'})
+                # Generic fallback
+                raise _serializers.ValidationError({'detail': msg})
 
-        staff = StaffProfile.objects.create(user=user, **validated_data)
-        # ---------------------------------------------------------
-        # 3. CRITICAL FIX: Link User to Department as HoD/AHoD
-        # ---------------------------------------------------------
-        department = validated_data.get('department') or getattr(staff, 'department', None)
-        # Safer way to handle potential None values for designation
-        designation = (validated_data.get('designation') or '').lower()
+        # 3. Assign Role (HoD / AHoD) - use saved department and designation from above
+        if not department:
+            department = getattr(staff, 'department', None)
+        if not designation:
+            designation = getattr(staff, 'designation', '')
+        
+        designation = str(designation).lower()
 
         if department:
-            # Normalize department: if it's a PK, resolve to model instance
+            # Ensure department is a model instance (handles raw IDs if passed)
             from .models import Department as _Department
             if not isinstance(department, _Department):
                 try:
@@ -194,12 +230,16 @@ class StaffCreateSerializer(serializers.ModelSerializer):
                     department = None
 
             if department:
-                if 'hod' in designation and 'assistant' not in designation and 'ahod' not in designation:
-                    # Set as Head of Department
+                # Broader check: looks for "hod", "head", "chair"
+                is_head = any(x in designation for x in ['hod', 'head', 'chair'])
+                is_assistant = any(x in designation for x in ['assistant', 'ahod', 'assist'])
+
+                if is_head and not is_assistant:
+                    print(f"Assigning {user.email} as HoD of {department.name}")
                     department.head_of_department = user
                     department.save()
-                elif 'ahod' in designation or 'assistant' in designation:
-                    # Set as Assistant Head
+                elif is_assistant:
+                    print(f"Assigning {user.email} as AHoD of {department.name}")
                     department.ahod = user
                     department.save()
 

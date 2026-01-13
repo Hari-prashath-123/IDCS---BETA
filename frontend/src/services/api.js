@@ -53,17 +53,20 @@ export async function fetchCourses() {
 }
 
 export async function uploadStudentExcel(formData) {
-  console.debug('Uploading student Excel', formData.get('file') && formData.get('file').name)
-  // Let axios/browser set the proper Content-Type with boundary for FormData
-  // Ensure we don't force JSON Content-Type from the default client headers
-  const res = await api.post('/import/students/', formData, { timeout: 120000, headers: { 'Content-Type': undefined } })
+  const res = await api.post('/import/students/', formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+  })
   return res.data
 }
 
 export async function uploadStaffExcel(formData) {
-  console.debug('Uploading staff Excel', formData.get('file') && formData.get('file').name)
-  // Ensure Content-Type is not forced to application/json so browser can set multipart boundary
-  const res = await api.post('/import/staff/', formData, { timeout: 120000, headers: { 'Content-Type': undefined } })
+  const res = await api.post('/import/staff/', formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+  })
   return res.data
 }
 

@@ -1,5 +1,6 @@
 from django.db import models
 from django.conf import settings
+from django.core.validators import MinValueValidator, MaxValueValidator
 
 
 class TimeStampedModel(models.Model):
@@ -98,6 +99,41 @@ class Course(TimeStampedModel):
 
     def __str__(self):
         return f"{self.code} - {self.name}"
+
+
+class CourseAllocation(TimeStampedModel):
+    """Which courses are active for a given department, batch and semester.
+
+    - `department`: department owning the allocation
+    - `batch_year`: joining/entry year (e.g. 2023)
+    - `semester`: semester number (1-8)
+    - `courses`: many-to-many to `Course` (courses taught this semester)
+    """
+
+    department = models.ForeignKey(
+        Department,
+        on_delete=models.CASCADE,
+        related_name='course_allocations',
+    )
+    batch_year = models.PositiveIntegerField(help_text='Joining year, e.g. 2023')
+    semester = models.PositiveSmallIntegerField(
+        validators=[MinValueValidator(1), MaxValueValidator(8)],
+        help_text='Semester (1-8)'
+    )
+    courses = models.ManyToManyField(
+        Course,
+        related_name='allocations',
+        blank=True,
+        help_text='Courses allocated for this department/batch/semester'
+    )
+
+    class Meta:
+        unique_together = ['department', 'batch_year', 'semester']
+        verbose_name = 'Course Allocation'
+        verbose_name_plural = 'Course Allocations'
+
+    def __str__(self):
+        return f"{self.department} — Batch {self.batch_year} — Sem {self.semester}"
 
 
 class StudentProfile(TimeStampedModel):

@@ -5,12 +5,14 @@ from rest_framework.response import Response
 from django.core.files.storage import default_storage
 from django.contrib.auth import get_user_model
 
-from .models import Course, StudentProfile, StaffProfile, Department
+from .models import Course, StudentProfile, StaffProfile, Department, CourseAllocation
 from .serializers import CourseSerializer, StudentProfileSerializer
 from .serializers import StaffProfileSerializer, DepartmentSerializer
 from .serializers import StudentCreateSerializer, StaffCreateSerializer
+from .serializers import CourseAllocationSerializer
 
 from rest_framework import generics
+from rest_framework.decorators import action
 
 User = get_user_model()
 
@@ -82,12 +84,108 @@ class StaffCreateView(generics.CreateAPIView):
         try:
             return super().create(request, *args, **kwargs)
         except Exception as e:
+            # If it's a DRF ValidationError, return 400 with details
+            try:
+                from rest_framework.exceptions import ValidationError as DRFValidationError
+                if isinstance(e, DRFValidationError):
+                    return Response(e.detail, status=status.HTTP_400_BAD_REQUEST)
+            except Exception:
+                pass
+
             import traceback
             tb = traceback.format_exc()
             # Print to server log for debugging
             print('StaffCreateView error:', str(e))
             print(tb)
             return Response({'error': str(e), 'traceback': tb}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class CourseAllocationViewSet(viewsets.ModelViewSet):
+    """Manage CourseAllocation objects.
+
+    - Custom action `get_active_courses` returns courses for given department_id, batch_year, semester.
+    - create/update override allow bulk assigning courses to allocation.
+    """
+    queryset = CourseAllocation.objects.all().select_related('department')
+    serializer_class = CourseAllocationSerializer
+
+    @action(detail=False, methods=['get'], url_path='get_active_courses')
+    def get_active_courses(self, request):
+        dept = request.query_params.get('department_id') or request.query_params.get('department')
+        batch = request.query_params.get('batch_year') or request.query_params.get('batch')
+        semester = request.query_params.get('semester')
+
+        if not (dept and batch and semester):
+            # return empty list when required params missing
+            return Response([], status=status.HTTP_200_OK)
+
+        try:
+            allocation = CourseAllocation.objects.filter(
+                department_id=dept,
+                batch_year=int(batch),
+                semester=int(semester),
+            ).prefetch_related('courses').first()
+        except Exception:
+            allocation = None
+
+        if allocation:
+            courses = allocation.courses.all()
+            data = CourseSerializer(courses, many=True).data
+            return Response(data, status=status.HTTP_200_OK)
+
+        # Not found -> return empty list (safer fallback)
+        return Response([], status=status.HTTP_200_OK)
+
+    def create(self, request, *args, **kwargs):
+        """Create or update allocation and bulk-assign courses.
+
+        Expected payload: { department: <id>, batch_year: 2023, semester: 3, courses: [1,2,3] }
+        If an allocation for department/batch/semester exists, replace its `courses` set.
+        """
+        data = request.data
+        dept = data.get('department')
+        batch = data.get('batch_year')
+        semester = data.get('semester')
+        courses = data.get('courses', [])
+
+        if not (dept and batch and semester):
+            return Response({'detail': 'department, batch_year and semester are required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        allocation, created = CourseAllocation.objects.get_or_create(
+            department_id=dept,
+            batch_year=int(batch),
+            semester=int(semester),
+        )
+
+        try:
+            # set courses (allow empty list)
+            allocation.courses.set(courses)
+            allocation.save()
+        except Exception as e:
+            return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = CourseAllocationSerializer(allocation)
+        status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
+        return Response(serializer.data, status=status_code)
+
+    def update(self, request, *args, **kwargs):
+        # reuse partial update behavior but ensure bulk course assignment is handled
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+        data = request.data
+        courses = data.get('courses', None)
+
+        serializer = self.get_serializer(instance, data=data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        self.perform_update(serializer)
+
+        if courses is not None:
+            try:
+                instance.courses.set(courses)
+            except Exception as e:
+                return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(self.get_serializer(instance).data)
 
 
 class BulkImportStudentsView(APIView):

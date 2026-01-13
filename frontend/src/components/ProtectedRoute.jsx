@@ -17,7 +17,12 @@ export default function ProtectedRoute({ allowedRoles = [], children }) {
       switch (role) {
         case 'superuser':
           return !!user.is_superuser || !!user.is_superuser === true
+        case 'hod':
+          return !!user.is_hod || (user.role && user.role.toLowerCase() === 'hod')
+        case 'ahod':
+          return !!user.is_ahod || (user.role && user.role.toLowerCase() === 'ahod')
         case 'staff':
+        case 'faculty':
           return !!user.is_faculty || !!user.is_staff
         case 'student':
           return !!user.is_student

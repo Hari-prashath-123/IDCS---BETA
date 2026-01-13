@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, useRef } from 'react'
+import React, { createContext, useContext, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 // Prefer the `jwt-decode` library when available, but fall back to a
 // lightweight JWT payload parser to avoid runtime "jwtDecode is not a function"
@@ -43,63 +43,11 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
   const [loading, setLoading] = useState(true)
   const navigate = useNavigate()
-  const refreshTimeoutRef = useRef(null)
-
-  const clearRefreshTimeout = () => {
-    try {
-      if (refreshTimeoutRef.current) {
-        clearTimeout(refreshTimeoutRef.current)
-        refreshTimeoutRef.current = null
-      }
-    } catch (e) {
-      // ignore
-    }
-  }
-
-  const scheduleTokenRefresh = (accessToken) => {
-    clearRefreshTimeout()
-    try {
-      const decoded = jwtDecode(accessToken)
-      if (!decoded || !decoded.exp) return
-      const expiresAt = decoded.exp * 1000
-      // Refresh 60 seconds before expiry
-      const refreshAt = Math.max(0, expiresAt - Date.now() - 60000)
-      refreshTimeoutRef.current = setTimeout(async () => {
-        try {
-          await refreshToken()
-        } catch (err) {
-          logout()
-        }
-      }, refreshAt)
-    } catch (e) {
-      // ignore
-    }
-  }
-
-  const refreshToken = async () => {
-    const refresh = localStorage.getItem('refresh_token')
-    if (!refresh) throw new Error('no refresh token')
-    try {
-      const res = await api.post('/auth/refresh/', { refresh })
-      const newAccess = res.data.access || res.data.token || res.data.access_token
-      if (newAccess) {
-        localStorage.setItem('access_token', newAccess)
-        scheduleTokenRefresh(newAccess)
-      }
-      return newAccess
-    } catch (err) {
-      localStorage.removeItem('access_token')
-      localStorage.removeItem('refresh_token')
-      throw err
-    }
-  }
 
   const login = async (username, password) => {
     setLoading(true)
     try {
-      console.debug('AuthProvider: calling /auth/login/ for', username)
       const res = await api.post('/auth/login/', { username, password })
-      console.debug('AuthProvider: /auth/login/ response', res && res.status)
       const { access, refresh, token, access_token, refresh_token } = res.data
 
       // support multiple token shapes
@@ -108,7 +56,6 @@ export function AuthProvider({ children }) {
 
       if (accessToken) {
         localStorage.setItem('access_token', accessToken)
-        scheduleTokenRefresh(accessToken)
       }
       if (refreshToken) {
         localStorage.setItem('refresh_token', refreshToken)
@@ -120,98 +67,15 @@ export function AuthProvider({ children }) {
         try {
           const userRes = await api.get('/auth/user/')
           const profile = userRes.data
-          console.debug('AuthProvider: login profile', profile)
           setUser(profile)
 
-          // If backend provided explicit `role`, use it first for routing
-          if (profile && profile.role) {
-            const r = String(profile.role).toLowerCase()
-            if (r === 'admin') {
-              navigate('/admin/dashboard')
-              try { scheduleTokenRefresh(accessToken) } catch (e) {}
-              return profile
-            }
-            if (r === 'hod') {
-              navigate('/hod/dashboard')
-              try { scheduleTokenRefresh(accessToken) } catch (e) {}
-              return profile
-            }
-            if (r === 'ahod') {
-              navigate('/ahod/dashboard')
-              try { scheduleTokenRefresh(accessToken) } catch (e) {}
-              return profile
-            }
-            if (r === 'staff') {
-              navigate('/staff/dashboard')
-              try { scheduleTokenRefresh(accessToken) } catch (e) {}
-              return profile
-            }
-            if (r === 'student') {
-              navigate('/student/dashboard')
-              try { scheduleTokenRefresh(accessToken) } catch (e) {}
-              return profile
-            }
-          }
-
-          // robust HoD detection and routing
-          const isHodProfile = (p) => {
-            if (!p) return false
-            // explicit boolean flags
-            if (p.is_hod || p.is_department_head || p.is_department_admin || p.is_head) return true
-            // arrays or groups
-            const groups = p.groups || p.roles || p.role_names || p.permissions || []
-            try {
-              if (Array.isArray(groups)) {
-                for (const g of groups) {
-                  const name = typeof g === 'string' ? g : (g && (g.name || g.code || g.id))
-                  if (!name) continue
-                  const s = String(name).toLowerCase()
-                  if (s.includes('hod') || (s.includes('head') && s.includes('department'))) return true
-                }
-              }
-            } catch (e) {}
-
-            // designation/title/role fields
-            const designation = (p.designation || p.title || p.position || p.user_type || p.role) ? String(p.designation || p.title || p.position || p.user_type || p.role).toLowerCase() : ''
-            if (designation.includes('hod') || (designation.includes('head') && designation.includes('department'))) return true
-
-            // fallback: department admin fields
-            if (p.department_admin_for || p.admin_department_name || p.department_admin) return true
-
-            return false
-          }
-
-          // Extra check: query staff list to see if this user's email/faculty id is marked as HOD
-          try {
-            const staffRes = await api.get('/staff/')
-            const staffItems = Array.isArray(staffRes.data) ? staffRes.data : (staffRes.data?.results || [])
-            const lowerEmail = profile && profile.email ? String(profile.email).toLowerCase() : ''
-            const matched = (staffItems || []).find((s) => {
-              try {
-                const sEmail = s?.email || s?.user || ''
-                if (sEmail && String(sEmail).toLowerCase() === lowerEmail) return true
-                const sFaculty = s?.faculty_id || ''
-                if (sFaculty && profile && profile.faculty_id && String(sFaculty) === String(profile.faculty_id)) return true
-                return false
-              } catch (e) { return false }
-            })
-            if (matched) {
-              const des = (matched.designation || '').toString().toLowerCase()
-              if (des.includes('hod') || (des.includes('head') && des.includes('department'))) {
-                // treat as HoD
-                navigate('/hod/dashboard')
-                try { scheduleTokenRefresh(accessToken) } catch (e) { }
-                return profile
-              }
-            }
-          } catch (e) {
-            // ignore staff lookup errors
-          }
-
+          // Route based on role hierarchy (most specific to least specific)
           if (profile.is_superuser) {
             navigate('/admin/dashboard')
-          } else if (isHodProfile(profile)) {
+          } else if (profile.is_hod || (profile.role && profile.role.toLowerCase() === 'hod')) {
             navigate('/hod/dashboard')
+          } else if (profile.is_ahod || (profile.role && profile.role.toLowerCase() === 'ahod')) {
+            navigate('/ahod/dashboard')
           } else if (profile.is_student) {
             navigate('/student/dashboard')
           } else if (profile.is_faculty || profile.is_staff) {
@@ -220,8 +84,6 @@ export function AuthProvider({ children }) {
             navigate('/', { replace: true })
           }
 
-          // schedule automatic refresh based on token expiry
-          try { scheduleTokenRefresh(accessToken) } catch (e) { }
           return profile
         } catch (e) {
           // If the backend rejects the token (401), remove it to avoid repeated 401s
@@ -236,12 +98,10 @@ export function AuthProvider({ children }) {
           // fallback: try decoding token client-side
           const decoded = jwtDecode(accessToken)
           setUser(decoded)
-          try { scheduleTokenRefresh(accessToken) } catch (e) { }
           return decoded
         }
       }
     } catch (err) {
-      console.error('AuthProvider: login error', err)
       throw err
     } finally {
       setLoading(false)
@@ -249,7 +109,6 @@ export function AuthProvider({ children }) {
   }
 
   const logout = () => {
-    try { if (refreshTimeoutRef?.current) clearTimeout(refreshTimeoutRef.current) } catch (e) {}
     localStorage.removeItem('access_token')
     localStorage.removeItem('refresh_token')
     setUser(null)
@@ -282,7 +141,6 @@ export function AuthProvider({ children }) {
       try {
         const res = await api.get('/auth/user/')
         setUser(res.data)
-        try { scheduleTokenRefresh(token) } catch (err) { }
       } catch (e) {
         // If backend rejects token (401), remove tokens to avoid repeated 401s
         if (e && e.response && e.response.status === 401) {
@@ -294,7 +152,6 @@ export function AuthProvider({ children }) {
           try {
             const decoded = jwtDecode(token)
             setUser(decoded)
-            try { scheduleTokenRefresh(token) } catch (err) { }
           } catch (err) {
             setUser(null)
           }
@@ -305,15 +162,6 @@ export function AuthProvider({ children }) {
     }
 
     bootstrap()
-  }, [])
-
-  // clear any scheduled timeout on unmount
-  useEffect(() => {
-    return () => {
-      try {
-        if (refreshTimeoutRef?.current) clearTimeout(refreshTimeoutRef.current)
-      } catch (e) {}
-    }
   }, [])
 
   return (
