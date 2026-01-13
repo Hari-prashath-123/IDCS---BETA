@@ -35,7 +35,7 @@ def current_user(request):
                     if 'hod' in des or ('head' in des and 'department' in des):
                         role = 'hod'
                         is_hod = True
-                    elif 'ahod' in des or des.includes('assistant hod') or ( 'assistant' in des and 'hod' in des ):
+                    elif 'ahod' in des or ('assistant hod' in des) or ( 'assistant' in des and 'hod' in des ):
                         role = 'ahod'
                         is_ahod = True
                     else:

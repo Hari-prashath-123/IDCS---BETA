@@ -155,4 +155,29 @@ class StaffCreateSerializer(serializers.ModelSerializer):
         user.save()
 
         staff = StaffProfile.objects.create(user=user, **validated_data)
+        # If the created staff's designation indicates HOD/AHOD, assign department heads
+        try:
+            dept = validated_data.get('department') or getattr(staff, 'department', None)
+            des = (validated_data.get('designation') or getattr(staff, 'designation', '') or '').lower()
+            if dept and des:
+                # normalize department instance: if dept is a PK, resolve it
+                from .models import Department as _Department
+                if not isinstance(dept, _Department):
+                    try:
+                        dept = _Department.objects.get(pk=dept)
+                    except Exception:
+                        dept = None
+
+                if dept:
+                    # If designation contains 'hod' but not 'assistant' or 'ahod', set as head_of_department
+                    if 'hod' in des and 'assistant' not in des and 'ahod' not in des:
+                        dept.head_of_department = user
+                        dept.save()
+                    # If designation contains 'ahod' or 'assistant', set as ahod
+                    elif 'ahod' in des or ('assistant' in des and 'hod' in des) or 'assistant' in des:
+                        dept.ahod = user
+                        dept.save()
+        except Exception:
+            # ignore failures while assigning department heads
+            pass
         return staff

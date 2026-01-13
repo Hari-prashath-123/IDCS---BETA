@@ -77,6 +77,17 @@ class StudentCreateView(generics.CreateAPIView):
 class StaffCreateView(generics.CreateAPIView):
     queryset = StaffProfile.objects.all()
     serializer_class = StaffCreateSerializer
+    
+    def create(self, request, *args, **kwargs):
+        try:
+            return super().create(request, *args, **kwargs)
+        except Exception as e:
+            import traceback
+            tb = traceback.format_exc()
+            # Print to server log for debugging
+            print('StaffCreateView error:', str(e))
+            print(tb)
+            return Response({'error': str(e), 'traceback': tb}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class BulkImportStudentsView(APIView):
