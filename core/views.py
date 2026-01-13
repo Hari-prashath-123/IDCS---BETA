@@ -5,7 +5,7 @@ from rest_framework.response import Response
 from django.core.files.storage import default_storage
 from django.contrib.auth import get_user_model
 
-from .models import Course, StudentProfile, StaffProfile, Department, CourseAllocation, ClassAdvisor, Timetable
+from .models import Course, StudentProfile, StaffProfile, Department, CourseAllocation, ClassAdvisor, Timetable, CurriculumBatch
 from .serializers import CourseSerializer, StudentProfileSerializer
 from .serializers import StaffProfileSerializer, DepartmentSerializer
 from .serializers import StudentCreateSerializer, StaffCreateSerializer
@@ -16,6 +16,8 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.permissions import IsAuthenticated
 from django.db import IntegrityError
+from rest_framework.permissions import IsAdminUser, AllowAny
+from django.db.models import Q
 
 User = get_user_model()
 
@@ -23,39 +25,145 @@ User = get_user_model()
 class CourseViewSet(viewsets.ModelViewSet):
     queryset = Course.objects.all()
     serializer_class = CourseSerializer
-
     def get_queryset(self):
         """
         Optionally filter courses by semester or department.
+        Admins see all courses.
+        HODs/Staff see approved courses OR courses they created.
         Examples:
             ?semester=3
             ?department=5 (filters by target_departments)
         """
+        user = getattr(self.request, 'user', None)
         queryset = Course.objects.all().prefetch_related('target_departments')
-        
+
+        # Admins see everything
+        if user and user.is_authenticated and user.is_superuser:
+            base_qs = queryset
+        else:
+            # Non-admins should see approved courses or those they created
+            if user and user.is_authenticated:
+                base_qs = queryset.filter(Q(is_approved=True) | Q(created_by=user))
+            else:
+                # anonymous users only see approved courses
+                base_qs = queryset.filter(is_approved=True)
+
         # Filter by semester
         semester = self.request.query_params.get('semester', None)
         if semester is not None:
-            queryset = queryset.filter(semester=semester)
-        
+            base_qs = base_qs.filter(semester=semester)
+
         # Filter by target department
         department = self.request.query_params.get('department', None)
         if department is not None:
-            queryset = queryset.filter(target_departments__id=department).distinct()
-        
-        return queryset
-    
+            base_qs = base_qs.filter(target_departments__id=department).distinct()
+
+        return base_qs
+
     def create(self, request, *args, **kwargs):
         """
-        Override create to ensure proper handling of target_departments.
-        The serializer should handle the ManyToMany relationship correctly,
-        but we ensure proper response format here.
+        Override create to set approval metadata based on user role.
+        - Superusers: is_approved=True
+        - Other authenticated users: is_approved=False and created_by=request.user
         """
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        # Make a mutable copy of incoming data
+        data = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
+        user = getattr(request, 'user', None)
+
+        # By default, creations require admin approval. To immediately approve
+        # at creation time an explicit `auto_approve=true` must be sent and the
+        # requesting user must be a superuser.
+        auto_approve = False
+        try:
+            # allow both string and boolean forms
+            if 'auto_approve' in data:
+                v = data.get('auto_approve')
+                if isinstance(v, str):
+                    auto_approve = v.lower() in ['1', 'true', 'yes']
+                else:
+                    auto_approve = bool(v)
+                # remove flag so serializer doesn't fail on unknown field
+                data.pop('auto_approve', None)
+        except Exception:
+            auto_approve = False
+
+        # If explicitly requested and the user is superuser, allow immediate approval
+        if user and user.is_authenticated and getattr(user, 'is_superuser', False) and auto_approve:
+            data['is_approved'] = True
+            data.pop('created_by', None)
+        else:
+            # mark as pending approval
+            data['is_approved'] = False
+            data['is_rejected'] = False
+            if user and user.is_authenticated:
+                data['created_by'] = getattr(user, 'id', None)
+
+        serializer = self.get_serializer(data=data)
+        try:
+            serializer.is_valid(raise_exception=True)
+        except Exception as e:
+            # Log payload and validation errors to server console for debugging
+            try:
+                print('Course create validation failed. Payload:', data)
+                print('Validation errors:', serializer.errors)
+            except Exception:
+                pass
+            # Return structured errors to client
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
         self.perform_create(serializer)
+
+        # If created by an admin and course has batch/semester and target_departments,
+        # auto-add the course to CourseAllocation for those departments so it appears
+        # immediately in semester allocations.
+        try:
+            course_obj = serializer.instance
+            if user and user.is_authenticated and user.is_superuser:
+                # require batch and semester to be present
+                if getattr(course_obj, 'batch', None) and getattr(course_obj, 'semester', None):
+                    # iterate through target_departments M2M
+                    for dept in course_obj.target_departments.all():
+                        try:
+                            allocation, created = CourseAllocation.objects.get_or_create(
+                                department=dept,
+                                batch_year=course_obj.batch,
+                                semester=course_obj.semester,
+                            )
+                            allocation.courses.add(course_obj)
+                            allocation.save()
+                        except Exception:
+                            # don't block creation on allocation errors
+                            pass
+        except Exception:
+            pass
+
         headers = self.get_success_headers(serializer.data)
         return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+
+    @action(detail=True, methods=['post'], permission_classes=[IsAdminUser])
+    def approve(self, request, pk=None):
+        """Approve a course (admin only)."""
+        course = self.get_object()
+        course.is_approved = True
+        course.is_rejected = False
+        course.save()
+        return Response(self.get_serializer(course).data)
+
+    @action(detail=True, methods=['post'], permission_classes=[IsAdminUser])
+    def reject(self, request, pk=None):
+        """Reject a course proposal (admin only). Marks as rejected."""
+        course = self.get_object()
+        course.is_rejected = True
+        course.is_approved = False
+        course.save()
+        return Response(self.get_serializer(course).data)
+
+    @action(detail=False, methods=['get'], permission_classes=[IsAdminUser])
+    def pending(self, request):
+        """Return all pending course proposals (admin only)."""
+        qs = Course.objects.filter(is_approved=False, is_rejected=False)
+        data = self.get_serializer(qs, many=True).data
+        return Response(data)
 
 
 class StudentProfileViewSet(viewsets.ModelViewSet):
@@ -123,11 +231,26 @@ class CourseAllocationViewSet(viewsets.ModelViewSet):
             return Response([], status=status.HTTP_200_OK)
 
         try:
-            allocation = CourseAllocation.objects.filter(
-                department_id=dept,
-                batch_year=int(batch),
-                semester=int(semester),
-            ).prefetch_related('courses').first()
+                # try exact department first
+                allocation = CourseAllocation.objects.filter(
+                    department_id=dept,
+                    batch_year=int(batch),
+                    semester=int(semester),
+                ).prefetch_related('courses').first()
+                # fallback: if not found, try the parent department (some site setups store
+                # allocations at a parent umbrella department while classes belong to a sub-dept)
+                if not allocation:
+                    try:
+                        from .models import Department
+                        dep = Department.objects.filter(id=dept).first()
+                        if dep and dep.parent_id:
+                            allocation = CourseAllocation.objects.filter(
+                                department_id=dep.parent_id,
+                                batch_year=int(batch),
+                                semester=int(semester),
+                            ).prefetch_related('courses').first()
+                    except Exception:
+                        allocation = None
         except Exception:
             allocation = None
 
@@ -190,6 +313,36 @@ class CourseAllocationViewSet(viewsets.ModelViewSet):
                 return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
         return Response(self.get_serializer(instance).data)
+
+
+class CurriculumBatchViewSet(viewsets.ModelViewSet):
+    """Manage curriculum batches.
+
+    - Admins (IsAdminUser) may list, create, and update batches (toggle is_active).
+    - Unauthenticated/regular users may only read the currently active batch.
+    """
+    queryset = CurriculumBatch.objects.all()
+    serializer_class = None  # set in __init__ to avoid circular imports
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        from .serializers import CurriculumBatchSerializer
+        self.serializer_class = CurriculumBatchSerializer
+
+    def get_permissions(self):
+        # Mutating actions require admin privileges
+        if self.action in ['create', 'update', 'partial_update', 'destroy']:
+            return [IsAdminUser()]
+        # Read actions allowed for anyone
+        return [AllowAny()]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        user = getattr(self.request, 'user', None)
+        # If user is not authenticated or not admin, only expose the active batch
+        if not (user and user.is_authenticated and (user.is_staff or user.is_superuser)):
+            return qs.filter(is_active=True)
+        return qs.order_by('-year')
 
 
 class BulkImportStudentsView(APIView):

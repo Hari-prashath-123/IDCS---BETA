@@ -9,6 +9,8 @@ export default function ViewCurriculum() {
   const [semesterFilter, setSemesterFilter] = useState<string | number>('')
   const [deptFilter, setDeptFilter] = useState<string | number>('')
   const [selectedBatch, setSelectedBatch] = useState<string | number>('')
+  const [curriculumBatches, setCurriculumBatches] = useState<any[]>([])
+  const [pendingCourses, setPendingCourses] = useState<any[]>([])
   const [editCourseId, setEditCourseId] = useState<number | null>(null)
   const [editForm, setEditForm] = useState<any>(null)
   const [savingEdit, setSavingEdit] = useState(false)
@@ -35,8 +37,96 @@ export default function ViewCurriculum() {
       }
     }
     load()
+    // also load curriculum batches for admin controls
+    const loadBatches = async () => {
+      try {
+        const bRes = await api.get('/curriculum-batches/')
+        const bData = Array.isArray(bRes.data) ? bRes.data : (bRes.data.results || [])
+        if (mounted) setCurriculumBatches(bData)
+      } catch (err) {
+        console.error('Failed to load curriculum batches', err)
+      }
+    }
+    loadBatches()
+    // load pending proposals for admin
+    const loadPending = async () => {
+      try {
+        const pRes = await api.get('/courses/pending/')
+        const pData = Array.isArray(pRes.data) ? pRes.data : (pRes.data.results || [])
+        if (mounted) setPendingCourses(pData)
+      } catch (err) {
+        console.error('Failed to load pending courses', err)
+      }
+    }
+    loadPending()
     return () => { mounted = false }
   }, [])
+
+  const approveCourse = async (id: number) => {
+    try {
+      const res = await api.post(`/courses/${id}/approve/`)
+      const approved = res.data
+      // remove from pending
+      setPendingCourses(prev => prev.filter(p => p.id !== id))
+      // add to main courses list so UI updates
+      setCourses(prev => [approved, ...prev])
+    } catch (err) {
+      console.error('Failed to approve course', err)
+      alert('Failed to approve')
+    }
+  }
+
+  const rejectCourse = async (id: number) => {
+    try {
+      const res = await api.post(`/courses/${id}/reject/`)
+      // remove from pending list
+      setPendingCourses(prev => prev.filter(p => p.id !== id))
+    } catch (err) {
+      console.error('Failed to reject course', err)
+      alert('Failed to reject')
+    }
+  }
+
+  const setActiveBatchByYear = async (year: number | string) => {
+    try {
+      const asNum = Number(year)
+      const batchObj = curriculumBatches.find((b: any) => Number(b.year) === asNum)
+      if (batchObj) {
+        const res = await api.patch(`/curriculum-batches/${batchObj.id}/`, { is_active: true })
+        const updated = res.data
+        setCurriculumBatches(prev => prev.map(b => ({ ...b, is_active: b.id === updated.id })))
+        if (updated.year !== undefined) setSelectedBatch(String(updated.year))
+      } else {
+        // create a new curriculum batch for this year and mark active
+        const res = await api.post('/curriculum-batches/', { year: asNum, is_active: true })
+        const created = res.data
+        setCurriculumBatches(prev => [
+          ...prev.map(b => ({ ...b, is_active: false })),
+          created,
+        ])
+        if (created.year !== undefined) setSelectedBatch(String(created.year))
+      }
+      await fetchFiltered()
+    } catch (err) {
+      console.error('Failed to set/create active curriculum batch', err)
+      alert('Failed to set active batch')
+    }
+  }
+
+  const deactivateBatchByYear = async (year: number | string) => {
+    try {
+      const asNum = Number(year)
+      const batchObj = curriculumBatches.find((b: any) => Number(b.year) === asNum)
+      if (!batchObj) return
+      const res = await api.patch(`/curriculum-batches/${batchObj.id}/`, { is_active: false })
+      const updated = res.data
+      setCurriculumBatches(prev => prev.map(b => ({ ...b, is_active: b.id === updated.id ? false : b.is_active })))
+      await fetchFiltered()
+    } catch (err) {
+      console.error('Failed to deactivate curriculum batch', err)
+      alert('Failed to deactivate batch')
+    }
+  }
 
   const getDeptName = (id: any) => {
     if (!id) return ''
@@ -117,6 +207,46 @@ export default function ViewCurriculum() {
           <p className="text-slate-600 mt-1">View courses added to the curriculum</p>
         </div>
 
+        {/* Pending Proposals */}
+        {pendingCourses && pendingCourses.length > 0 && (
+          <div className="mb-4 bg-yellow-50 border border-yellow-200 rounded p-4">
+            <div className="flex justify-between items-center mb-2">
+              <div className="text-sm font-semibold">⚠ Pending Course Proposals ({pendingCourses.length})</div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full table-auto">
+                <thead>
+                  <tr className="text-left border-b">
+                    <th className="px-3 py-2">Batch</th>
+                    <th className="px-3 py-2">Dept</th>
+                    <th className="px-3 py-2">Code</th>
+                    <th className="px-3 py-2">Name</th>
+                    <th className="px-3 py-2">Credits</th>
+                    <th className="px-3 py-2">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pendingCourses.map((c: any) => (
+                    <tr key={c.id} className="border-b hover:bg-yellow-50">
+                      <td className="px-3 py-2">{c.batch ?? c.BATCH}</td>
+                      <td className="px-3 py-2">{c.admin_department_name}</td>
+                      <td className="px-3 py-2">{c.code}</td>
+                      <td className="px-3 py-2">{c.name}</td>
+                      <td className="px-3 py-2">{c.L ?? 0}-{c.T ?? 0}-{c.P ?? 0}-{c.S ?? 0} ({c.C ?? 0})</td>
+                      <td className="px-3 py-2">
+                        <div className="flex space-x-2">
+                          <button onClick={() => approveCourse(c.id)} className="px-3 py-1 bg-green-600 text-white rounded">✅ Approve</button>
+                          <button onClick={() => rejectCourse(c.id)} className="px-3 py-1 bg-red-600 text-white rounded">❌ Reject</button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
         <div className="bg-white rounded-xl shadow-sm border p-4 mb-4">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
             <div>
@@ -178,10 +308,34 @@ export default function ViewCurriculum() {
                   const rows = groups[String(batchYear)] || []
                   return (
                     <div key={batchYear}>
-                      <div className="mb-2 flex justify-between items-center">
-                        <div className="text-sm font-semibold text-slate-700">Batch: {batchYear}</div>
-                        <div className="text-sm text-slate-500">{rows.length} course{rows.length !== 1 ? 's' : ''}</div>
-                      </div>
+                          <div className="mb-2 flex justify-between items-center">
+                            <div className="flex items-center space-x-3">
+                              <div className="text-sm font-semibold text-slate-700">Batch: {batchYear}</div>
+                              {(() => {
+                                const batchObj = curriculumBatches.find((b: any) => Number(b.year) === Number(batchYear))
+                                return (
+                                  <label className="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" className="sr-only" checked={!!(batchObj && batchObj.is_active)} onChange={(e) => {
+                                      if (e.target.checked) setActiveBatchByYear(batchYear)
+                                      else deactivateBatchByYear(batchYear)
+                                    }} />
+                                    <div className={`w-11 h-6 rounded-full transition-colors ${batchObj && batchObj.is_active ? 'bg-blue-600' : 'bg-gray-200'}`} />
+                                    <span className={`absolute left-1 top-1 w-4 h-4 bg-white rounded-full shadow transform transition-transform ${batchObj && batchObj.is_active ? 'translate-x-5' : ''}`} />
+                                  </label>
+                                )
+                              })()}
+                            </div>
+                            <div className="flex items-center space-x-3">
+                              <div className="text-sm text-slate-500">{rows.length} course{rows.length !== 1 ? 's' : ''}</div>
+                              {(() => {
+                                const batchObj = curriculumBatches.find((b: any) => Number(b.year) === Number(batchYear))
+                                if (!batchObj || !batchObj.is_active) {
+                                  return <button onClick={() => setActiveBatchByYear(batchYear)} className="px-3 py-1 text-sm bg-blue-600 text-white rounded">Make Active</button>
+                                }
+                                return null
+                              })()}
+                            </div>
+                          </div>
                       <div className="overflow-x-auto">
                         <table className="w-full table-auto">
                           <thead>

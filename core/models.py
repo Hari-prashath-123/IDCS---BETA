@@ -1,6 +1,7 @@
 from django.db import models
 from django.conf import settings
 from django.core.validators import MinValueValidator, MaxValueValidator
+from django.db import transaction
 
 
 class TimeStampedModel(models.Model):
@@ -87,6 +88,18 @@ class Course(TimeStampedModel):
     C = models.FloatField(default=0, help_text="Total credits")
     # Batch year for which this course entry applies
     batch = models.PositiveSmallIntegerField(null=True, blank=True, help_text="Academic batch year (e.g., 2023)")
+    # Approval workflow fields
+    # Default to False so proposals are pending approval unless explicitly approved
+    is_approved = models.BooleanField(default=False, help_text="Whether the course proposal is approved")
+    is_rejected = models.BooleanField(default=False, help_text="Whether the course proposal was rejected")
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='created_courses',
+        help_text='User who proposed or created this course'
+    )
     
     # Marks
     internal_marks = models.IntegerField(default=0)
@@ -142,6 +155,8 @@ class StudentProfile(TimeStampedModel):
     )
     reg_no = models.CharField(max_length=50, unique=True)
     roll_no = models.CharField(max_length=50, null=True, blank=True)
+    # Year the student joined (used for curriculum mapping)
+    batch_year = models.IntegerField(null=True, blank=True, help_text="Year the student joined, used for curriculum mapping")
     name = models.CharField(max_length=255, null=True, blank=True)
     department = models.ForeignKey(
         Department, null=True, blank=True, on_delete=models.SET_NULL, related_name='students'
@@ -303,3 +318,24 @@ class Timetable(TimeStampedModel):
     def __str__(self):
         subject_name = self.subject.code if self.subject else 'Free'
         return f"{self.department.code} - Batch {self.batch_year} - Sec {self.section} - Sem {self.semester} - {self.day} P{self.period}: {subject_name}"
+
+
+class CurriculumBatch(models.Model):
+    """Represents a curriculum batch year and which one is active globally."""
+    year = models.PositiveIntegerField(unique=True)
+    is_active = models.BooleanField(default=False)
+
+    class Meta:
+        verbose_name = 'Curriculum Batch'
+        verbose_name_plural = 'Curriculum Batches'
+
+    def save(self, *args, **kwargs):
+        # If setting this batch active, deactivate all others atomically
+        with transaction.atomic():
+            if self.is_active:
+                # set others to False
+                CurriculumBatch.objects.filter(is_active=True).exclude(pk=self.pk).update(is_active=False)
+            super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.year}{' (active)' if self.is_active else ''}"

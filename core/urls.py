@@ -3,6 +3,7 @@ from django.urls import path, include
 
 from .views import CourseViewSet, StudentProfileViewSet, StaffProfileViewSet, DepartmentViewSet, BulkImportStudentsView, BulkImportStaffView
 from .views import StudentCreateView, StaffCreateView, CourseAllocationViewSet, ClassAdvisorViewSet, TimetableViewSet
+from .views import CurriculumBatchViewSet
 
 router = DefaultRouter()
 router.register(r'courses', CourseViewSet, basename='course')
@@ -12,6 +13,7 @@ router.register(r'departments', DepartmentViewSet, basename='department')
 router.register(r'course-allocations', CourseAllocationViewSet, basename='course-allocation')
 router.register(r'class-advisors', ClassAdvisorViewSet, basename='class-advisor')
 router.register(r'timetables', TimetableViewSet, basename='timetable')
+router.register(r'curriculum-batches', CurriculumBatchViewSet, basename='curriculumbatch')
 
 # Important: register explicit import/create endpoints BEFORE the router include
 # so that paths like /students/create/ are not swallowed by the router's detail

@@ -2,6 +2,7 @@ from django.contrib.auth import get_user_model
 from rest_framework import serializers
 from django.db import IntegrityError
 from .models import StudentProfile, Course, Department, StaffProfile, CourseAllocation, ClassAdvisor, Timetable
+from .models import CurriculumBatch
 
 
 User = get_user_model()
@@ -286,3 +287,10 @@ class TimetableSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at'
         ]
         read_only_fields = ['created_at', 'updated_at']
+
+
+class CurriculumBatchSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CurriculumBatch
+        fields = ['id', 'year', 'is_active']
+        read_only_fields = []

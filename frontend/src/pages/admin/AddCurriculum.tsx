@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from 'react'
 import DashboardLayout from '../../components/DashboardLayout'
 import api from '../../services/api.js'
+import { useAuth } from '../../context/AuthContext'
 
 export default function AddCurriculum() {
+  const { user } = useAuth()
   const [departments, setDepartments] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
@@ -196,6 +198,13 @@ export default function AddCurriculum() {
         batch: parseInt((formData as any).batch) || 2023,
         internal_marks: parseInt(formData.internal_marks) || 0,
         external_marks: parseInt(formData.external_marks) || 0,
+      }
+
+      // If the current user is a superuser, request immediate approval
+      if (user && user.is_superuser) {
+        // add explicit flag so backend can auto-approve
+        // backend expects 'auto_approve' to be present and true for immediate approval
+        ;(payload as any).auto_approve = true
       }
 
       console.log('AddCurriculum: submit payload', payload)
