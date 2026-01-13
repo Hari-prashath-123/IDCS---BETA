@@ -7,6 +7,7 @@ export default function AddCurriculum() {
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [toast, setToast] = useState<{ type: 'success' | 'error', message: string } | null>(null)
+  const [formErrors, setFormErrors] = useState<Record<string, any> | null>(null)
 
   const [formData, setFormData] = useState({
     semester: '',
@@ -199,8 +200,10 @@ export default function AddCurriculum() {
 
       console.log('AddCurriculum: submit payload', payload)
 
-      await api.post('/courses/', payload)
+      const res = await api.post('/courses/', payload)
       showToast('success', 'Course added successfully!')
+      console.log('AddCurriculum: created course', res.data)
+      setFormErrors(null)
       
       // Reset form
       setFormData({
@@ -225,9 +228,17 @@ export default function AddCurriculum() {
       setOtherCategory('')
       
     } catch (err: any) {
-      console.error('Error adding course:', err)
-      const errorMsg = err.response?.data?.detail || err.response?.data?.error || err.message || 'Failed to add course'
-      showToast('error', errorMsg)
+      console.error('Error adding course (full):', err)
+      const respData = err?.response?.data
+      // If server returned field errors (dict), show them inline
+      if (respData && typeof respData === 'object') {
+        setFormErrors(respData)
+        const combined = Object.entries(respData).map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : v}`).join('; ')
+        showToast('error', combined || 'Failed to add course')
+      } else {
+        const errorMsg = respData?.detail || respData?.error || err.message || 'Failed to add course'
+        showToast('error', errorMsg)
+      }
     } finally {
       setSubmitting(false)
     }
@@ -498,6 +509,17 @@ export default function AddCurriculum() {
               </button>
             </div>
           </form>
+        )}
+        {/* Server validation errors */}
+        {formErrors && (
+          <div className="mt-4 bg-red-50 border border-red-200 text-red-700 p-4 rounded">
+            <h4 className="font-semibold mb-2">Server validation errors</h4>
+            <ul className="list-disc pl-5 text-sm">
+              {Object.entries(formErrors).map(([k, v]) => (
+                <li key={k}><strong>{k}:</strong> {Array.isArray(v) ? v.join(', ') : String(v)}</li>
+              ))}
+            </ul>
+          </div>
         )}
       </div>
     </DashboardLayout>

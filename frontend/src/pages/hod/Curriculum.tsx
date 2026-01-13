@@ -12,7 +12,12 @@ export default function HodCurriculum() {
   const [added, setAdded] = useState<Record<string, boolean>>({})
   const [error, setError] = useState<string | null>(null)
 
-  const userDept = (user && (user.department || user.department_admin_for || user.admin_department_name)) || ''
+  const userDeptRaw = (user && (user.department || user.department_admin_for || user.admin_department_name)) || ''
+  const userDept = useMemo(() => {
+    if (!userDeptRaw) return ''
+    if (typeof userDeptRaw === 'object') return (userDeptRaw.name || userDeptRaw.code || userDeptRaw.id || '').toString()
+    return String(userDeptRaw)
+  }, [userDeptRaw])
 
   useEffect(() => {
     const loadDeps = async () => {
@@ -57,19 +62,47 @@ export default function HodCurriculum() {
 
   const filteredByBatchAndDept = useMemo(() => {
     if (!courses) return []
+    const normalizedUserDept = (userDept || '').toString().trim().toLowerCase()
     return courses.filter((c: any) => {
       const courseBatch = c.batch ?? c.BATCH ?? 2023
       if (String(courseBatch) !== String(batch)) return false
-      // match by admin_department_name
-      if (userDept && c.admin_department_name && String(c.admin_department_name).toLowerCase() === String(userDept).toLowerCase()) return true
-      // match by target_departments array
-      const targets = c.target_departments || []
-      // targets might be array of ids or objects
-      const matchesTarget = targets.some((t: any) => {
+      // Robust admin department extraction (handle multiple field names)
+      const adminDeptRaw = c.admin_department_name ?? c.admin_department ?? c.admin_dept ?? c.admin_dept_name ?? c.ADMIN_DEPARTMENT_NAME ?? ''
+      const adminDept = (adminDeptRaw || '').toString().trim().toLowerCase()
+
+      // If admin department explicitly set to ALL (or missing), consider available to all
+      if (!adminDept || adminDept === 'all') return true
+
+      // If admin department matches user's department (case-insensitive), include
+      if (normalizedUserDept && adminDept === normalizedUserDept) return true
+
+      // Extract target departments from various possible fields
+      let targetsRaw: any = c.target_departments ?? c.target_depts ?? c.target_dept ?? c.targets ?? c.TARGET_DEPARTMENTS ?? []
+      let targetsArr: string[] = []
+      if (Array.isArray(targetsRaw)) {
+        targetsArr = targetsRaw.map((t: any) => {
+          if (!t) return ''
+          if (typeof t === 'object') return (t.name || t.code || t.id || '').toString().trim().toLowerCase()
+          return String(t).toString().trim().toLowerCase()
+        }).filter(Boolean)
+      } else if (typeof targetsRaw === 'string') {
+        targetsArr = targetsRaw.split(/[;,|]/).map(s => s.trim().toLowerCase()).filter(Boolean)
+      } else if (targetsRaw != null) {
+        // fallback: coerce to string
+        targetsArr = String(targetsRaw).split(/[;,|]/).map(s => s.trim().toLowerCase()).filter(Boolean)
+      }
+
+      // If no explicit targets were provided, treat as available to all
+      if (!targetsArr || targetsArr.length === 0) return true
+
+      // Check if any target matches the user's dept name/code or the deptId
+      const matchesTarget = targetsArr.some((t: string) => {
         if (!t) return false
-        if (typeof t === 'object') return String(t.id) === String(deptId) || String(t.name) === String(userDept)
-        return String(t) === String(deptId) || String(t) === String(userDept)
+        if (deptId && String(t) === String(deptId)) return true
+        if (t === normalizedUserDept) return true
+        return false
       })
+
       if (matchesTarget) return true
       return false
     })

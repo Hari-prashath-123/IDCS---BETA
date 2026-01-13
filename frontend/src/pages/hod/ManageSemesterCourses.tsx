@@ -170,6 +170,7 @@ export default function ManageSemesterCourses() {
       const courseData = {
         ...newCourse,
         semester: selectedSemester,
+        batch: selectedBatch,
         admin_department_name: userDept,
         target_departments: deptId ? [deptId] : [],
       }
@@ -199,8 +200,16 @@ export default function ManageSemesterCourses() {
         external_marks: 60,
       })
     } catch (e: any) {
-      console.error('Failed to create course', e)
-      setMessage({ type: 'error', text: e.response?.data?.detail || 'Failed to create course' })
+      console.error('Failed to create course (full error):', e)
+      console.error('Response data:', e.response?.data)
+      console.error('Sent payload:', courseData)
+      const respData = e.response?.data
+      if (respData && typeof respData === 'object') {
+        const combined = Object.entries(respData).map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : v}`).join('; ')
+        setMessage({ type: 'error', text: combined || 'Failed to create course' })
+      } else {
+        setMessage({ type: 'error', text: respData?.detail || 'Failed to create course' })
+      }
     }
   }
 

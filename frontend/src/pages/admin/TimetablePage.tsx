@@ -13,8 +13,33 @@ export default function TimetablePage() {
 	const [loading, setLoading] = useState(false)
 	const [warningMessage, setWarningMessage] = useState<string | null>(null)
 	const [usingFallback, setUsingFallback] = useState(false)
+	const [selectedSubject, setSelectedSubject] = useState<string>('')
+	const [timetableData, setTimetableData] = useState<Record<string, string>>({})
 
 	const userDept = (user && (user.department || user.department_admin_for || user.admin_department_name)) || ''
+
+	const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+	const periods = [1, 2, 3, 4, 5, 6, 7]
+
+	const handleCellClick = (day: string, period: number) => {
+		if (!selectedSubject) {
+			alert('Please select a subject first')
+			return
+		}
+		const key = `${day}_${period}`
+		setTimetableData(prev => ({
+			...prev,
+			[key]: selectedSubject
+		}))
+	}
+
+	const getCellSubject = (day: string, period: number) => {
+		const key = `${day}_${period}`
+		const subjectCode = timetableData[key]
+		if (!subjectCode) return null
+		const subject = subjects.find(s => s.code === subjectCode)
+		return subject
+	}
 
 	useEffect(() => {
 		const loadDeps = async () => {
@@ -149,14 +174,98 @@ export default function TimetablePage() {
 					) : subjects.length === 0 ? (
 						<div className="text-slate-500 text-sm">No courses available. Please check the selection criteria.</div>
 					) : (
-						<select className="w-full px-2 py-1 border rounded">
+						<select 
+							className="w-full px-2 py-1 border rounded"
+							value={selectedSubject}
+							onChange={(e) => setSelectedSubject(e.target.value)}
+						>
 							<option value="">Select subject</option>
 							{subjects.map((s:any) => (
-								<option key={s.id} value={s.id}>{s.code} — {s.name}</option>
+								<option key={s.id} value={s.code}>{s.code} — {s.name}</option>
 							))}
 						</select>
 					)}
 				</div>
+
+				{/* Timetable Grid */}
+				{subjects.length > 0 && (
+					<div className="bg-white rounded-xl shadow-sm border p-4 mt-6">
+						<div className="mb-4">
+							<h2 className="text-xl font-semibold text-gray-900">Timetable Grid</h2>
+							<p className="text-sm text-gray-600 mt-1">
+								{selectedSubject ? `Click a cell to assign "${selectedSubject}"` : 'Select a subject above, then click cells to assign'}
+							</p>
+						</div>
+
+						<div className="overflow-x-auto">
+							<table className="w-full border-collapse">
+								<thead>
+									<tr>
+										<th className="border border-gray-300 bg-gray-100 px-4 py-3 text-left font-semibold text-gray-700">
+											Day / Period
+										</th>
+										{periods.map(period => (
+											<th key={period} className="border border-gray-300 bg-gray-100 px-4 py-3 text-center font-semibold text-gray-700">
+												Period {period}
+											</th>
+										))}
+									</tr>
+								</thead>
+								<tbody>
+									{days.map(day => (
+										<tr key={day}>
+											<td className="border border-gray-300 bg-gray-50 px-4 py-3 font-medium text-gray-700">
+												{day}
+											</td>
+											{periods.map(period => {
+												const subject = getCellSubject(day, period)
+												return (
+													<td 
+														key={`${day}_${period}`}
+														className={`border border-gray-300 px-2 py-3 text-center cursor-pointer transition-colors ${
+															subject 
+																? 'bg-indigo-50 hover:bg-indigo-100' 
+																: 'hover:bg-gray-100'
+														}`}
+														onClick={() => handleCellClick(day, period)}
+													>
+														{subject ? (
+															<div className="text-sm">
+																<div className="font-semibold text-indigo-700">{subject.code}</div>
+																<div className="text-xs text-gray-600 truncate">{subject.name}</div>
+															</div>
+														) : (
+															<span className="text-gray-400 text-xs">Empty</span>
+														)}
+													</td>
+												)
+											})}
+										</tr>
+									))}
+								</tbody>
+							</table>
+						</div>
+
+						{/* Action Buttons */}
+						<div className="mt-4 flex justify-between items-center">
+							<button
+								onClick={() => setTimetableData({})}
+								className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-gray-700"
+							>
+								Clear Timetable
+							</button>
+							<button
+								onClick={() => {
+									console.log('Timetable Data:', timetableData)
+									alert('Timetable saved (check console for data)')
+								}}
+								className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
+							>
+								Save Timetable
+							</button>
+						</div>
+					</div>
+				)}
 			</div>
 		</DashboardLayout>
 	)

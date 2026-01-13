@@ -15,7 +15,9 @@ def current_user(request):
     is_hod = False
     is_ahod = False
     
-    print(f"\n=== current_user for {u.email} ===")
+    # defensive: user object may not have all attributes depending on auth backend
+    user_email = getattr(u, 'email', '')
+    print(f"\n=== current_user for {user_email} ===")
     
     try:
         if u.is_superuser:
@@ -79,13 +81,13 @@ def current_user(request):
     print(f"Final role: {role}, is_hod: {is_hod}, is_ahod: {is_ahod}\n")
     
     data = {
-        'id': u.id,
-        'username': u.username,
-        'email': u.email,
-        'first_name': u.first_name,
-        'last_name': u.last_name,
-        'is_superuser': u.is_superuser,
-        'is_staff': u.is_staff,
+        'id': getattr(u, 'id', None),
+        'username': getattr(u, 'username', None),
+        'email': getattr(u, 'email', None),
+        'first_name': getattr(u, 'first_name', ''),
+        'last_name': getattr(u, 'last_name', ''),
+        'is_superuser': getattr(u, 'is_superuser', False),
+        'is_staff': getattr(u, 'is_staff', False),
         'is_student': getattr(u, 'is_student', False),
         'is_faculty': getattr(u, 'is_faculty', False),
         'role': role,

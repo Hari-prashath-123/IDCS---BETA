@@ -44,6 +44,53 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true)
   const navigate = useNavigate()
 
+  // Module-level refresh timer (kept across re-renders)
+  let refreshTimer = null
+
+  const scheduleRefresh = (accessToken) => {
+    try {
+      const decoded = jwtDecode(accessToken)
+      if (!decoded || !decoded.exp) return
+      const expiresAt = decoded.exp * 1000
+      const now = Date.now()
+      // Refresh 30 seconds before expiry (but not negative)
+      const refreshIn = Math.max(0, expiresAt - now - 30000)
+      if (refreshTimer) clearTimeout(refreshTimer)
+      refreshTimer = setTimeout(async () => {
+        try {
+          const refreshToken = localStorage.getItem('refresh_token')
+          if (!refreshToken) {
+            // nothing to do
+            return
+          }
+          const res = await api.post('/auth/refresh/', { refresh: refreshToken })
+          const newAccess = res.data.access || res.data.access_token
+          const newRefresh = res.data.refresh || res.data.refresh_token || refreshToken
+          if (newAccess) localStorage.setItem('access_token', newAccess)
+          if (newRefresh) localStorage.setItem('refresh_token', newRefresh)
+          // reschedule for the new token
+          scheduleRefresh(newAccess)
+        } catch (err) {
+          // If refresh fails, force logout to avoid stuck state
+          localStorage.removeItem('access_token')
+          localStorage.removeItem('refresh_token')
+          setUser(null)
+          setLoading(false)
+          if (typeof window !== 'undefined' && window.location) window.location.href = '/login'
+        }
+      }, refreshIn)
+    } catch (e) {
+      // ignore scheduling errors
+    }
+  }
+
+  const clearRefresh = () => {
+    try {
+      if (refreshTimer) clearTimeout(refreshTimer)
+    } catch (e) {}
+    refreshTimer = null
+  }
+
   const login = async (username, password) => {
     setLoading(true)
     try {
@@ -61,6 +108,9 @@ export function AuthProvider({ children }) {
         localStorage.setItem('refresh_token', refreshToken)
       }
 
+      // schedule background refresh
+      if (accessToken) scheduleRefresh(accessToken)
+
       if (accessToken) {
         localStorage.setItem('access_token', accessToken)
         // After storing token, fetch authoritative user profile from backend
@@ -68,6 +118,9 @@ export function AuthProvider({ children }) {
           const userRes = await api.get('/auth/user/')
           const profile = userRes.data
           setUser(profile)
+
+          // schedule background refresh when we have an authoritative token
+          if (accessToken) scheduleRefresh(accessToken)
 
           // Route based on role hierarchy (most specific to least specific)
           if (profile.is_superuser) {
@@ -112,6 +165,7 @@ export function AuthProvider({ children }) {
     localStorage.removeItem('access_token')
     localStorage.removeItem('refresh_token')
     setUser(null)
+    clearRefresh()
     navigate('/login')
   }
 
@@ -141,6 +195,8 @@ export function AuthProvider({ children }) {
       try {
         const res = await api.get('/auth/user/')
         setUser(res.data)
+        // schedule refresh for existing token
+        scheduleRefresh(token)
       } catch (e) {
         // If backend rejects token (401), remove tokens to avoid repeated 401s
         if (e && e.response && e.response.status === 401) {
@@ -152,6 +208,7 @@ export function AuthProvider({ children }) {
           try {
             const decoded = jwtDecode(token)
             setUser(decoded)
+            scheduleRefresh(token)
           } catch (err) {
             setUser(null)
           }

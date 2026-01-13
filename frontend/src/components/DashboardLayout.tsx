@@ -654,6 +654,16 @@ export default function DashboardLayout({
                     icon: <Home className="h-5 w-5" />,
                   },
                   {
+                    label: "Add Curriculum",
+                    path: "/admin/add-curriculum",
+                    icon: <BookOpen className="h-5 w-5" />,
+                  },
+                  {
+                    label: "Curriculum",
+                    path: "/admin/curriculum",
+                    icon: <BookOpen className="h-5 w-5" />,
+                  },
+                  {
                     label: "Notifications",
                     path: "/notifications",
                     icon: <Bell className="h-5 w-5" />,
